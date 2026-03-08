@@ -2,7 +2,17 @@
 
 ## What is the MCP Server?
 
-`typst-d2-mcp` is a Model Context Protocol (MCP) server that allows AI assistants like Claude Desktop to render D2 diagrams and compile Typst documents with embedded D2 blocks.
+`typst-d2-mcp` is a Model Context Protocol (MCP) server that enables AI assistants to create professional documentation with embedded D2 diagrams in Typst documents.
+
+## Philosophy
+
+This MCP server provides **one focused tool** that encourages AI assistants to produce rich, visual documentation. Instead of separate tools for rendering diagrams, the server guides AI to:
+
+1. Write Typst content with narrative structure
+2. Embed diagrams directly using `#d2[...]` syntax
+3. Compile the complete document to PDF in one step
+
+This approach results in better documentation because the AI thinks about diagrams in context with the surrounding text.
 
 ## Installation
 
@@ -39,146 +49,210 @@ Add to your Claude Desktop configuration file:
 
 Replace `/absolute/path/to/typst-d2-mcp` with the actual path to your built binary.
 
+### OpenCode
+
+Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "typst-d2": {
+      "type": "local",
+      "command": "/absolute/path/to/typst-d2-mcp"
+    }
+  }
+}
+```
+
 ### Other MCP Clients
 
 The server uses stdio transport, so it works with any MCP client that supports stdio:
 
 - Claude Desktop
+- OpenCode
 - Cline (VS Code extension)
 - Continue (VS Code/JetBrains extension)
 - Any custom MCP client
 
 Configuration format varies by client - refer to their documentation.
 
-## Available Tools
+## Available Tool
 
-### 1. render_d2
+### compile_typst_with_d2
 
-Render D2 diagram code to SVG format.
-
-**Parameters:**
-- `d2_code` (required): D2 diagram source code
-- `layout` (optional): Layout engine - `elk`, `dagre`, or `tala` (default: `elk`)
-- `theme` (optional): Theme ID from 0-200
-- `sketch` (optional): Enable hand-drawn style - `true` or `false` (default: `false`)
-
-**Returns:** SVG content as text
-
-**Example:**
-```
-User: "Render this D2 diagram: x -> y -> z"
-
-Claude calls render_d2 with:
-{
-  "d2_code": "x -> y -> z",
-  "layout": "elk"
-}
-
-Returns: <svg>...</svg>
-```
-
-### 2. render_d2_base64
-
-Render D2 diagram and encode as base64 for embedding in Typst documents.
-
-**Parameters:** Same as `render_d2`
-
-**Returns:** Base64-encoded SVG plus a ready-to-use Typst code snippet
-
-**Example:**
-```
-User: "Give me the Typst code for a diagram showing client -> server -> database"
-
-Claude calls render_d2_base64 with:
-{
-  "d2_code": "client -> server -> database",
-  "layout": "elk"
-}
-
-Returns:
-Base64: PD94bWwgdmVyc2lvbj0iMS4wIj8...
-
-Typst code:
-#image(decode64("PD94bWwgdmVyc2lvbj0iMS4wIj..."), format: "svg")
-```
-
-### 3. compile_typst_with_d2
-
-Preprocess and compile a Typst document with embedded D2 diagrams.
+**Purpose**: Compile Typst documents with embedded D2 diagrams to PDF.
 
 **Parameters:**
-- `file_path` (required): Absolute path to the `.typ` file
+- `file_path` (required): Absolute path to the Typst source file (.typ) containing #d2[...] blocks
 
 **Returns:** Success message with output PDF path
 
-**Example:**
-```
-User: "Compile my document at /Users/me/doc.typ"
+**Tool Description (Visible to AI):**
 
-Claude calls compile_typst_with_d2 with:
-{
-  "file_path": "/Users/me/doc.typ"
-}
+The tool provides extensive guidance to AI assistants through its description:
 
-Returns: "Successfully compiled to /Users/me/doc.pdf"
-```
+- **Best Practices**: Use D2 for system architectures, flowcharts, ERDs, technical illustrations
+- **Syntax Examples**: Shows basic and advanced #d2[...] usage with options
+- **Typical Workflow**: Guides AI through the complete documentation creation process
+- **Feature Highlights**: All D2 layouts (elk/dagre/tala), themes, sketch mode, clean output
 
-### 4. preprocess_typst
-
-Process Typst content with D2 blocks without compiling to PDF.
-
-**Parameters:**
-- `typst_content` (required): Typst source code containing `#d2[...]` blocks
-
-**Returns:** Processed Typst code with D2 blocks replaced by embedded SVG images
-
-**Example:**
-```
-User: "Process this Typst content with D2 diagrams: ..."
-
-Claude calls preprocess_typst with:
-{
-  "typst_content": "= Diagram\n\n#d2[x -> y]"
-}
-
-Returns processed Typst code with base64-encoded SVG
-```
+This rich description encourages AI assistants to produce high-quality visual documentation.
 
 ## Usage Examples
 
-### Interactive Diagram Creation
+### System Architecture Documentation
 
 ```
-User: "Create a D2 diagram showing a web architecture with frontend, backend, and database"
+User: "Create documentation for our microservices architecture"
 
-Claude:
-1. Calls render_d2 with D2 code
-2. Shows you the rendered diagram
-3. Can iterate based on your feedback
+AI Assistant:
+1. Creates Typst document with sections:
+   - Overview
+   - Architecture Diagram (using #d2[...])
+   - Service Descriptions
+   - Data Flow (using #d2[...])
+   - Deployment
+
+2. Saves to architecture.typ
+
+3. Calls compile_typst_with_d2 with file path
+
+Result: Professional PDF with embedded architecture diagrams
 ```
 
-### Document Generation
+### API Documentation
 
 ```
-User: "Create a Typst document with a system architecture diagram"
+User: "Document this REST API flow: client authenticates, 
+      fetches user data, and updates profile"
 
-Claude:
-1. Writes Typst content with #d2[...] blocks
-2. Calls preprocess_typst to get processed code
-3. Shows you the result
-4. Optionally calls compile_typst_with_d2 to generate PDF
+AI Assistant:
+1. Creates Typst document with:
+   - API Overview
+   - Authentication Flow Diagram (#d2 with sequence)
+   - Endpoint Descriptions
+   - Request/Response Examples
+   - State Diagram (#d2 showing user states)
+
+2. Compiles to PDF
+
+Result: Complete API documentation with visual flow diagrams
 ```
 
-### Batch Processing
+### Database Schema Documentation
 
 ```
-User: "Compile all my Typst files in /path/to/docs"
+User: "Create ER diagram documentation for our database schema"
 
-Claude:
-1. Lists files (using file system tools)
-2. Calls compile_typst_with_d2 for each .typ file
-3. Reports results
+AI Assistant:
+1. Creates Typst document with:
+   - Schema Overview
+   - ER Diagram using #d2[...] with:
+     users: Users {
+       shape: sql_table
+       id: int
+       name: string
+       email: string
+     }
+     posts: Posts {
+       shape: sql_table
+       id: int
+       user_id: int
+       content: text
+     }
+     users.id -> posts.user_id
+   - Table Descriptions
+   - Relationships
+
+2. Compiles to professional database documentation
+
+Result: ER diagram with detailed schema documentation
 ```
+
+## D2 Syntax Reference
+
+The tool supports all D2 syntax features:
+
+### Basic Diagram
+
+```typst
+#d2[
+  client -> server -> database
+]
+```
+
+### With Options
+
+```typst
+#d2(layout: "elk", theme: "200", sketch: "true")[
+  frontend: Frontend {
+    shape: rectangle
+    style.fill: "#b8d4ff"
+  }
+  backend: Backend {
+    shape: rectangle
+    style.fill: "#ffd4b8"
+  }
+  frontend -> backend: API Calls {
+    style.stroke-dash: 3
+  }
+]
+```
+
+### Layout Engines
+
+- `elk` (default): Best for hierarchical layouts
+- `dagre`: Good for directed graphs
+- `tala`: Experimental layout engine
+
+### Themes
+
+- Theme IDs from `0` to `200`
+- Examples: `0` (default), `100` (dark mode), `200` (colorblind-friendly)
+
+### Sketch Mode
+
+```typst
+#d2(sketch: "true")[
+  // Hand-drawn style diagram
+]
+```
+
+### Containers
+
+```typst
+#d2[
+  network: Corporate Network {
+    web: Web Tier {
+      nginx
+      apache
+    }
+    app: Application Tier {
+      api
+      workers
+    }
+    web.nginx -> app.api
+  }
+]
+```
+
+## Workflow Details
+
+### What the Tool Does
+
+1. **Preprocessing**: Scans .typ file for `#d2[...]` blocks
+2. **Rendering**: Calls D2 CLI for each diagram (stdin→stdout streaming)
+3. **Encoding**: Converts SVG to base64
+4. **Embedding**: Replaces #d2[...] with `#image(decode64("..."), format: "svg")`
+5. **Importing**: Adds `#import "@preview/based:0.2.0": decode64` automatically
+6. **Compilation**: Runs `typst compile` on processed content
+7. **Cleanup**: Removes temporary files, keeps only original .typ and output .pdf
+
+### No Filesystem Clutter
+
+- No intermediate `.svg` files created
+- No temporary files left behind
+- Only input `.typ` and output `.pdf` remain
 
 ## Troubleshooting
 
@@ -193,20 +267,52 @@ curl -fsSL https://d2lang.com/install.sh | sh -s --
 
 Install Typst: https://github.com/typst/typst#installation
 
-### Server not appearing in Claude Desktop
+### Server not appearing in MCP client
 
 1. Check the config file path is correct
 2. Verify the `command` path is absolute and points to the binary
-3. Restart Claude Desktop completely
-4. Check Claude Desktop logs:
-   - macOS: `~/Library/Logs/Claude/mcp*.log`
-   - Linux: `~/.config/Claude/logs/mcp*.log`
+3. Restart the MCP client completely
+4. Check client logs for MCP connection errors
 
-### Tool calls failing
+### Compilation fails
 
-- Ensure D2 and Typst are installed and in PATH
-- Check file paths are absolute (relative paths may not work)
-- Verify file permissions
+- Ensure file path is absolute (relative paths may not work)
+- Check file exists and is readable
+- Verify D2 syntax in #d2[...] blocks is valid
+- Check Typst syntax outside #d2[...] blocks
+
+## Advanced Usage
+
+### Custom D2 Configurations
+
+Use D2 options to control appearance:
+
+```typst
+#d2(
+  layout: "elk",
+  theme: "200",
+  sketch: "true"
+)[
+  // Your diagram code
+]
+```
+
+### Multiple Diagrams
+
+A single document can have many diagrams:
+
+```typst
+= Overview
+#d2[high-level architecture]
+
+= Component Details
+#d2[detailed component diagram]
+
+= Data Flow
+#d2[sequence diagram]
+```
+
+Each is processed independently with its own options.
 
 ## Technical Details
 
@@ -217,13 +323,13 @@ The server uses **stdio transport** (stdin/stdout) for communication with MCP cl
 ### Architecture
 
 ```
-MCP Client (Claude Desktop)
+MCP Client (Claude Desktop, OpenCode, etc.)
     ↕ (JSON-RPC over stdio)
 typst-d2-mcp Server
     ↕
 Internal Go packages:
-  - internal/d2 (D2 CLI integration)
   - internal/preprocessor (Typst preprocessing)
+  - internal/d2 (D2 CLI integration)
   - internal/typst (Typst CLI integration)
     ↕
 External CLIs:
@@ -238,19 +344,9 @@ External CLIs:
 - **Command execution**: Server executes `d2` and `typst` commands
 - **Trust**: Only run with trusted AI clients
 
-## Advanced Configuration
-
-### Environment Variables
-
-The server respects environment variables like `PATH` for finding `d2` and `typst` binaries.
-
-### Logging
-
-The server logs errors to stderr. To capture logs when running via MCP clients, check the client's log files (e.g., Claude Desktop logs).
-
 ## Development
 
-### Testing Tools Manually
+### Testing Manually
 
 You can test the server manually using the MCP Inspector:
 

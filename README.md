@@ -13,13 +13,10 @@ Render [D2 diagrams](https://d2lang.com) in [Typst](https://typst.app) documents
 
 ### 2. typst-d2-mcp (MCP Server)
 
-- 🤖 **AI Assistant Integration** - Works with Claude Desktop, Cline, and other MCP clients
-- 🔧 **Four Tools Available**:
-  - `render_d2` - Render D2 diagrams to SVG
-  - `render_d2_base64` - Render and encode for Typst embedding
-  - `compile_typst_with_d2` - Full preprocessing pipeline
-  - `preprocess_typst` - Process Typst content with D2 blocks
-- 📝 **Direct from AI** - Generate diagrams and documents conversationally
+- 🤖 **AI Assistant Integration** - Works with Claude Desktop, Cline, OpenCode, and other MCP clients
+- 📝 **Encourages Visual Documentation** - AI creates Typst documents with embedded D2 diagrams
+- ✨ **Single Focused Tool**: `compile_typst_with_d2` - Compile Typst documents with #d2[...] blocks
+- 🎯 **Best for**: Generating technical documentation, architecture docs, and illustrated guides
 
 ## Quick Start
 
@@ -104,34 +101,61 @@ Add to your Claude Desktop config file:
 }
 ```
 
-#### Available Tools
+#### Available Tool
 
-1. **render_d2** - Render D2 diagram code to SVG
-   - Input: `d2_code` (required), `layout` (elk/dagre/tala), `theme`, `sketch`
-   - Output: SVG content
+**compile_typst_with_d2** - Compile Typst documents with embedded D2 diagrams
 
-2. **render_d2_base64** - Render D2 and encode as base64 for Typst
-   - Input: Same as `render_d2`
-   - Output: Base64 string + Typst code snippet
+This is the single focused tool that encourages AI assistants to create rich, visual documentation.
 
-3. **compile_typst_with_d2** - Full preprocessing and compilation
-   - Input: `file_path` (path to .typ file)
-   - Output: Compiled PDF path
+**Input:**
+- `file_path` (required): Absolute path to Typst source file (.typ) containing #d2[...] blocks
 
-4. **preprocess_typst** - Process Typst content without compiling
-   - Input: `typst_content` (Typst source with #d2[...] blocks)
-   - Output: Processed Typst code with embedded diagrams
+**Output:**
+- Success message with PDF path
 
-#### Example Usage with Claude
+**The tool's description guides AI assistants to:**
+- Use D2 diagrams for system architectures, flowcharts, ERDs, and technical illustrations
+- Embed diagrams directly using #d2[...] syntax
+- Support all D2 features (layouts, themes, sketch mode)
+- Create clean documentation with no intermediate files
+
+#### Example Usage
 
 ```
-User: "Render this D2 diagram: x -> y -> z"
+User: "Create documentation for a microservices architecture"
 
-Claude uses render_d2 tool:
-- d2_code: "x -> y -> z"
-- layout: "elk"
+AI assistant:
+1. Creates Typst document with headings and content
+2. Embeds D2 diagrams using #d2[...] blocks:
+   - System architecture overview
+   - Service interaction diagrams
+   - Database schema (ERD)
+3. Saves to .typ file
+4. Calls compile_typst_with_d2 with file path
+5. Returns PDF with embedded diagrams
+```
 
-Returns SVG output
+```
+User: "Document this API flow: client -> gateway -> auth -> service -> database"
+
+AI assistant:
+1. Creates Typst document explaining the API flow
+2. Adds D2 diagram:
+   #d2(layout: "elk")[
+     client: Client {shape: person}
+     gateway: API Gateway
+     auth: Auth Service
+     service: Business Service
+     database: Database {shape: cylinder}
+     
+     client -> gateway: HTTPS
+     gateway -> auth: Verify token
+     auth -> service: Authorized request
+     service -> database: Query
+   ]
+3. Saves and compiles
+
+Result: Professional documentation with visual diagram
 ```
 
 ## How It Works
