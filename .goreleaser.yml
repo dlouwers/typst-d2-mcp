@@ -1,0 +1,75 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: typst-d2-prep
+    main: ./cmd/typst-d2-prep
+    binary: typst-d2-prep
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: typst-d2-prep
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - typo
+
+brews:
+  - name: typst-d2-prep
+    repository:
+      owner: dlouwers
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    folder: Formula
+    homepage: "https://github.com/dlouwers/typst-d2-mcp"
+    description: "Preprocessor for D2 diagrams in Typst documents"
+    license: "MIT"
+    dependencies:
+      - name: d2
+      - name: typst
+    install: |
+      bin.install "typst-d2-prep"
+    test: |
+      system "#{bin}/typst-d2-prep", "version"

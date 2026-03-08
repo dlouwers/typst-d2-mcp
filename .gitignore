@@ -28,3 +28,18 @@ build/
 test-*.typ
 test-*.pdf
 *-processed.typ
+
+# Go
+/typst-d2-prep
+*.test
+*.out
+coverage.txt
+go.sum
+typst-d2-prep
+*.test
+*.out
+coverage.txt
+go.sum
+
+# Temporary files
+*.tmp

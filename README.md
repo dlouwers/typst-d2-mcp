@@ -14,14 +14,42 @@ Render [D2 diagrams](https://d2lang.com) in [Typst](https://typst.app) documents
 ### Installation
 
 ```bash
-# 1. Clone the repository
+# Option 1: Homebrew (macOS/Linux)
+brew install dlouwers/tap/typst-d2-prep
+
+# Option 2: Download pre-built binary from GitHub Releases
+# https://github.com/dlouwers/typst-d2-mcp/releases
+
+# Option 3: Build from source
 git clone https://github.com/dlouwers/typst-d2-mcp.git
 cd typst-d2-mcp
+go build -o typst-d2-prep ./cmd/typst-d2-prep
 
-# 2. Make executable
-chmod +x typst-d2
+# Option 4: Install with go install
+go install github.com/dlouwers/typst-d2-mcp/cmd/typst-d2-prep@latest
 
-# 3. Verify D2 is installed
+# Verify installation
+typst-d2-prep version
+
+# Verify D2 is installed
+d2 --version
+# If not: curl -fsSL https://d2lang.com/install.sh | sh -s --
+```
+# Option 1: Download pre-built binary from GitHub Releases
+# https://github.com/dlouwers/typst-d2-mcp/releases
+
+# Option 2: Build from source
+git clone https://github.com/dlouwers/typst-d2-mcp.git
+cd typst-d2-mcp
+go build -o typst-d2-prep ./cmd/typst-d2-prep
+
+# Option 3: Install with go install
+go install github.com/dlouwers/typst-d2-mcp/cmd/typst-d2-prep@latest
+
+# Verify installation
+typst-d2-prep version
+
+# Verify D2 is installed
 d2 --version
 # If not: curl -fsSL https://d2lang.com/install.sh | sh -s --
 ```
@@ -47,7 +75,7 @@ d2 --version
 **Compile:**
 
 ```bash
-./typst-d2 compile document.typ
+typst-d2-prep compile document.typ
 # ✅ Creates document.pdf with embedded diagrams
 ```
 
@@ -66,7 +94,7 @@ d2 --version
 
 ## Requirements
 
-- **Python 3.6+** (for preprocessor script)
+- **Go 1.23+** (for building from source, optional)
 - **D2 CLI** installed and in PATH: https://d2lang.com/tour/install
 - **Typst 0.14.2+**: https://github.com/typst/typst
 - **Typst `based` package**: Automatically imported (no manual setup needed)
@@ -120,7 +148,7 @@ See `example.typ` for a complete demo with multiple diagrams, including:
 
 Compile it:
 ```bash
-./typst-d2 compile example.typ
+typst-d2-prep compile example.typ
 ```
 
 ## Technical Details
@@ -151,7 +179,7 @@ See [IMPLEMENTATION.md](IMPLEMENTATION.md) for detailed technical documentation.
 | **Syntax** | `#d2[code]` | `#image("out.svg")` | `#d2[code]` |
 | **Filesystem** | ✅ Clean | ❌ SVG files everywhere | ✅ Clean |
 | **D2 Features** | ✅ 100% | ✅ 100% | ❌ 0% |
-| **Build** | `typst-d2 compile` | `d2 ... && typst compile` | `typst compile` |
+| **Build** | `typst-d2-prep compile` | `d2 ... && typst compile` | `typst compile` |
 
 ## Troubleshooting
 
@@ -166,25 +194,43 @@ curl -fsSL https://d2lang.com/install.sh | sh -s --
 
 Make sure you're using the `#d2[...]` syntax (not `#import "lib.typ"`).
 
-### Python version issues
+## Development
 
-Requires Python 3.6+:
+### Building from Source
+
 ```bash
-python3 --version
+git clone https://github.com/dlouwers/typst-d2-mcp.git
+cd typst-d2-mcp
+go build -o typst-d2-prep ./cmd/typst-d2-prep
 ```
+
+### Running Tests
+
+```bash
+go test -v ./...
+```
+
+### Using Devcontainer
+
+The project includes a devcontainer configuration with all tools pre-installed:
+- Go 1.25
+- D2 CLI
+- Typst CLI
+- Linting tools (golangci-lint, govulncheck, etc.)
+
+Open in VS Code with Dev Containers extension for instant setup.
 
 ## Limitations
 
 - **No watch mode yet** - Currently only supports single compilation
 - **No incremental builds** - Every compile re-renders all diagrams
-- **Python dependency** - Requires Python 3 installed
 
 ## Future Improvements
 
 - [ ] Watch mode with smart caching
 - [ ] Incremental rendering (only changed diagrams)
 - [ ] Parallel diagram rendering
-- [ ] Native binary (no Python dependency)
+- [x] Native binary (no Python dependency) - **COMPLETED**
 - [ ] Typst package integration
 
 ## Contributing
