@@ -292,6 +292,81 @@ If you cannot view the PDF yourself (as an AI assistant), **inform the user** to
 - Splitting large diagrams into focused sub-diagrams
 - Reducing node count or simplifying structure
 
+### CRITICAL Anti-Pattern: Star Topology
+
+**The Problem:**
+
+When one central node connects to 5+ nodes, D2's ELK layout engine will spread them **horizontally** even with `direction: down`. This creates cramped, unreadable diagrams on A4 portrait pages.
+
+**Bad (creates horizontal spread):**
+```typst
+#d2(layout: "elk", theme: "0")[
+  direction: down  // This doesn't help!
+  
+  hospital: "Hospital"
+  
+  specialty1: "Cardiology"
+  specialty2: "Neurology"
+  specialty3: "Oncology"
+  specialty4: "Pediatrics"
+  specialty5: "Radiology"
+  specialty6: "Surgery"
+  
+  # Star topology - 1 center → 6 branches
+  hospital -> specialty1
+  hospital -> specialty2
+  hospital -> specialty3
+  hospital -> specialty4
+  hospital -> specialty5
+  hospital -> specialty6
+]
+```
+
+**Result:** ELK lays out specialty1-6 in a horizontal row despite `direction: down`. Text becomes tiny, diagram gets cramped.
+
+**Good (vertical chain):**
+```typst
+#d2(layout: "elk", theme: "0")[
+  direction: down
+  
+  hospital: "Hospital"
+  specialty1: "Cardiology"
+  specialty2: "Neurology"
+  specialty3: "Oncology"
+  specialty4: "Pediatrics"
+  specialty5: "Radiology"
+  specialty6: "Surgery"
+  
+  # Vertical chain instead of star
+  hospital -> specialty1 -> specialty2 -> specialty3 -> specialty4 -> specialty5 -> specialty6
+]
+```
+
+**Result:** True vertical stacking. All nodes flow down the page, using A4 portrait's height. Text is readable, plenty of space.
+
+**When to Fix:**
+- Star with 4+ branches → Convert to vertical chain
+- Nodes at same conceptual level → Chain them vertically
+- **Exception:** Org charts with 2-3 direct reports can stay as star (manageable width)
+
+**Alternative: Split the Diagram**
+
+If nodes aren't naturally sequential, split into multiple focused diagrams:
+
+```typst
+=== Surgical Specialties
+#d2(layout: "elk", theme: "0")[
+  direction: down
+  surgery -> cardiology -> neurosurgery
+]
+
+=== Medical Specialties  
+#d2(layout: "elk", theme: "0")[
+  direction: down
+  medicine -> oncology -> pediatrics
+]
+```
+
 ### Splitting Large Diagrams
 
 Instead of one massive diagram:

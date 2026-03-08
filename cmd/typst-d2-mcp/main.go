@@ -52,6 +52,21 @@ For A4 Portrait (default Typst):
   - AVOID: Wide horizontal layouts - they get cramped and text becomes tiny
   - RULE: If diagram has >5 nodes at same level, use vertical direction
 
+CRITICAL ANTI-PATTERN - STAR TOPOLOGY:
+  - Problem: One central node connecting to 5+ nodes creates horizontal spread
+  - Example BAD:
+      center -> node1
+      center -> node2
+      center -> node3
+      center -> node4
+      center -> node5
+    Result: Even with 'direction: down', ELK lays out node1-5 HORIZONTALLY
+  - Solution: Use VERTICAL CHAIN instead:
+      center -> node1 -> node2 -> node3 -> node4 -> node5
+    Result: True vertical layout, readable on A4 portrait
+  - When to use chain: Star with 4+ branches = convert to vertical chain
+  - Exception: Org charts with 2-3 direct reports can stay as star
+
 For A4 Landscape (set with #set page(flipped: true)):
   - WIDTH: ~25cm usable (ample horizontal space)
   - HEIGHT: ~17cm usable (limited vertical space)
