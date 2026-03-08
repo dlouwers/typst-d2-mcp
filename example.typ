@@ -1,4 +1,3 @@
-#import "lib.typ": d2
 
 = D2 Diagrams in Typst
 
@@ -10,7 +9,7 @@
 
 == With Options
 
-#d2(layout: "elk", theme: "200", sketch: "true")[
+#d2(layout: "elk", theme: "0", sketch: "true")[
   direction: right
   
   user: User {
@@ -32,7 +31,7 @@
 
 == Complex Architecture
 
-#d2(layout: "elk", theme: "100")[
+#d2(layout: "elk", theme: "0")[
   direction: right
   
   client: Client {

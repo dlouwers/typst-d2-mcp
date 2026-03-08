@@ -45,17 +45,20 @@ This tool processes Typst documents containing #d2[...] blocks and compiles them
 BEST PRACTICES:
 - Use D2 diagrams for system architectures, flowcharts, ERDs, and technical illustrations
 - Embed diagrams directly in Typst using #d2[...] syntax - no separate files needed
+- ALWAYS use layout: "elk" (best automatic layout engine)
+- ALWAYS use theme: "0" for print-friendly white backgrounds with good contrast
+- For print: avoid dark themes (100-200 range) - they have poor contrast on white paper
 - Supports all D2 features: layouts (elk/dagre/tala), themes, sketch mode, containers
 - Clean output: diagrams are base64-encoded SVGs, no filesystem clutter
 
 SYNTAX EXAMPLES:
-  Basic diagram:
-    #d2[
+  Basic diagram (print-friendly):
+    #d2(layout: "elk", theme: "0")[
       client -> server -> database
     ]
 
-  With options (layout, theme, sketch):
-    #d2(layout: "elk", theme: "200", sketch: "true")[
+  With shapes and custom styling (print-optimized):
+    #d2(layout: "elk", theme: "0")[
       frontend: Frontend {shape: rectangle}
       backend: Backend {shape: rectangle}
       frontend -> backend: API calls

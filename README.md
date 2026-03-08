@@ -58,7 +58,7 @@ d2 --version
   client -> server -> database
 ]
 
-#d2(layout: "elk", theme: "200")[
+#d2(layout: "elk", theme: "0")[
   user: User {shape: person}
   app: Application
   user -> app: Uses
@@ -191,7 +191,7 @@ Result: Professional documentation with visual diagram
 ### With Options
 
 ```typst
-#d2(layout: "elk", theme: "200", sketch: "true")[
+#d2(layout: "elk", theme: "0", sketch: "true")[
   direction: right
   
   user: User {

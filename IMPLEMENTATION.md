@@ -2,7 +2,7 @@
 
 ## What Was Built
 
-A **Python preprocessor** for embedding D2 diagrams in Typst documents using base64 encoding and the `based` package.
+A **Go-based preprocessor** (`typst-d2-prep`) and **MCP server** (`typst-d2-mcp`) for embedding D2 diagrams in Typst documents using base64 encoding and the `based` package.
 
 ## How It Works
 
@@ -51,23 +51,43 @@ Instead of escaping raw SVG strings (which causes `<` and `>` parsing issues), w
 ## File Structure
 
 ```
-typst-d2-cli/
-├── typst-d2              # Main preprocessor script (Python, 232 lines)
-├── example.typ           # Test document with 3 diagrams
-├── example.pdf           # Generated PDF (54 KB)
-├── lib.typ               # Placeholder (shows error if used without preprocessor)
-├── README.md             # Full documentation
-├── QUICKSTART.md         # Quick start guide
-└── IMPLEMENTATION.md     # This file
+typst-d2-mcp/
+├── cmd/
+│   ├── typst-d2-prep/     # CLI preprocessor (Go)
+│   └── typst-d2-mcp/      # MCP server (Go)
+├── internal/
+│   ├── preprocessor/      # Core preprocessing logic
+│   ├── d2/                # D2 CLI integration
+│   ├── typst/             # Typst compilation
+│   └── prerequisites/     # Binary validation
+├── example.typ            # Test document with 3 diagrams
+├── example.pdf            # Generated PDF (Python version, 54 KB)
+├── example-go.pdf         # Generated PDF (Go version, 54 KB)
+├── README.md              # Full documentation
+├── QUICKSTART.md          # Quick start guide
+├── MCP_GUIDE.md           # MCP server usage guide
+├── HOMEBREW_SETUP.md      # Homebrew tap setup
+└── IMPLEMENTATION.md      # This file
 ```
 
 ## Usage
 
+### CLI Preprocessor
+
 ```bash
 # Compile Typst document with D2 diagrams
-python3 typst-d2 compile document.typ
+typst-d2-prep compile document.typ
 
 # Output: document.pdf (with embedded SVG diagrams)
+```
+
+### MCP Server
+
+The MCP server runs in stdio mode for AI assistant integration:
+
+```bash
+# Start MCP server (used by AI assistants, not directly by users)
+./typst-d2-mcp
 ```
 
 ## Test Results
@@ -83,53 +103,67 @@ python3 typst-d2 compile document.typ
 ✅ File size reasonable: Yes (20-100 KB range)
 ```
 
-## Key Implementation Functions
+## Key Implementation Details
 
-### 1. `svg_to_typst_image(svg_content, options)`
+### 1. Preprocessing Pipeline (Go)
 
-Converts SVG string to Typst `#image()` call:
+The preprocessor uses Go's `regexp` package with multiline support:
 
-```python
-def svg_to_typst_image(svg_content, options):
-    svg_bytes = svg_content.encode('utf-8')
-    b64 = base64.b64encode(svg_bytes).decode('ascii')
-    typst_code = f'#image(decode64("{b64}"), format: "svg")'
-    
-    if 'pad' in options and options['pad'] != 'none':
-        pad_value = options['pad']
-        typst_code = f'#pad({pad_value}, {typst_code})'
-    
-    return typst_code
+```go
+// CRITICAL: (?s) flag makes . match newlines
+pattern := regexp.MustCompile(`(?s)#d2(?:\((.*?)\))?\[(.*?)\]`)
+
+// Extract options and code from each match
+options := parseOptions(match[1])  // "layout: \"elk\", theme: \"0\""
+code := match[2]                   // "x -> y -> z"
+```
+
+### 2. D2 Integration (Streaming)
+
+D2 CLI is called via stdin→stdout for each diagram:
+
+```go
+cmd := exec.Command("d2", args...)
+cmd.Stdin = strings.NewReader(code)
+output, err := cmd.Output()
+// output contains SVG
+```
+
+### 3. SVG to Typst Image (Base64 Encoding)
+
+SVG is base64-encoded and embedded:
+
+```go
+encoded := base64.StdEncoding.EncodeToString([]byte(svg))
+typstCode := fmt.Sprintf("#image(decode64(\"%s\"), format: \"svg\")", encoded)
 ```
 
 **Critical details:**
 - ✅ Includes `#` prefix for Typst function calls
 - ✅ Uses `format: "svg"` to specify image type
-- ✅ Supports optional padding wrapper
+- ✅ Zero temp files - entire pipeline uses streams
 
-### 2. `preprocess_file(input_path)`
 
-Main preprocessing logic:
+### 4. MCP Server Integration
 
-1. Read `.typ` file
-2. Remove `#import "lib.typ"` lines
-3. Extract all `#d2[...]` blocks
-4. Render each with D2 CLI
-5. Replace blocks with `#image()` calls
-6. Add `#import "@preview/based:0.2.0": decode64` at top
+The MCP server provides a single focused tool for AI assistants:
 
-### 3. `render_d2(code, options)`
-
-Calls D2 CLI via stdin→stdout:
-
-```python
-cmd = ['d2', '--layout=elk', '--theme=200', '-', '-']
-result = subprocess.run(cmd, input=code.encode('utf-8'), 
-                       capture_output=True, check=True)
-return result.stdout.decode('utf-8')
+```go
+compileTypstTool := mcp.NewTool("compile_typst_with_d2",
+    mcp.WithDescription(`Create and compile Typst documents with embedded D2 diagrams.
+    
+    BEST PRACTICES:
+    - ALWAYS use layout: "elk" (best automatic layout engine)
+    - ALWAYS use theme: "0" for print-friendly white backgrounds
+    ...`),
+    mcp.WithString("file_path", mcp.Required(), ...),
+)
 ```
 
-**Zero temp files** - entire pipeline uses streams.
+The tool encourages AI assistants to:
+- Create Typst documents with embedded `#d2[...]` blocks
+- Use print-friendly settings (theme 0, ELK layout)
+- Generate complete documentation with diagrams in context
 
 ## Why WASM Plugin Failed
 
@@ -146,23 +180,22 @@ See `/Users/dirk/Documents/projects/typst-d2-wasm/STATUS.md` for full analysis.
 
 ## Requirements
 
-- Python 3.6+
-- D2 CLI (v0.7.1+)
-- Typst 0.14.2+
-- `based` package (auto-imported from `@preview`)
+- **Go 1.23+** (for building from source)
+- **D2 CLI** (v0.7.1+): https://d2lang.com/tour/install
+- **Typst 0.14.2+**: https://github.com/typst/typst
+- **`based` package**: Auto-imported from `@preview/based:0.2.0`
 
 ## Limitations
 
 - **No watch mode yet** - Single compilation only
 - **No incremental builds** - Re-renders all diagrams every time
-- **Python dependency** - Requires Python 3 installed
 
 ## Future Improvements
 
 - [ ] Watch mode with file monitoring
 - [ ] Diagram caching (skip unchanged)
 - [ ] Parallel rendering (speed up multi-diagram docs)
-- [ ] Native binary (Rust/Go, no Python dependency)
+- [x] Native binary (no Python dependency) - **COMPLETED**
 - [ ] Typst package integration (`@preview/d2`)
 
 ## Success Criteria

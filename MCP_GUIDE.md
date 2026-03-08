@@ -184,7 +184,7 @@ The tool supports all D2 syntax features:
 ### With Options
 
 ```typst
-#d2(layout: "elk", theme: "200", sketch: "true")[
+#d2(layout: "elk", theme: "0", sketch: "true")[
   frontend: Frontend {
     shape: rectangle
     style.fill: "#b8d4ff"
@@ -290,7 +290,7 @@ Use D2 options to control appearance:
 ```typst
 #d2(
   layout: "elk",
-  theme: "200",
+  theme: "0",
   sketch: "true"
 )[
   // Your diagram code

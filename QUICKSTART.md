@@ -1,13 +1,20 @@
 # Quick Start Guide
 
-## Installation (30 seconds)
+## Installation
 
 ```bash
-# 1. Clone or download
-curl -O https://raw.githubusercontent.com/.../typst-d2
-chmod +x typst-d2
+# Option 1: Homebrew (recommended)
+brew install dlouwers/tap/typst-d2-prep
 
-# 2. Verify D2 is installed
+# Option 2: Build from source
+git clone https://github.com/dlouwers/typst-d2-mcp.git
+cd typst-d2-mcp
+go build -o typst-d2-prep ./cmd/typst-d2-prep
+
+# Option 3: Download pre-built binary
+# https://github.com/dlouwers/typst-d2-mcp/releases
+
+# Verify D2 is installed
 d2 --version
 # If not: curl -fsSL https://d2lang.com/install.sh | sh -s --
 ```
@@ -23,7 +30,7 @@ d2 --version
   client -> server -> database
 ]
 
-#d2(layout: "elk", theme: "200")[
+#d2(layout: "elk", theme: "0")[
   user: User {shape: person}
   app: Application
   user -> app: Uses
@@ -33,7 +40,7 @@ d2 --version
 ### Compile
 
 ```bash
-typst-d2 compile document.typ
+typst-d2-prep compile document.typ
 # ✅ Creates document.pdf with embedded diagrams
 # ✅ No intermediate files
 # ✅ No filesystem clutter
