@@ -31,15 +31,10 @@ test-*.pdf
 
 # Go
 /typst-d2-prep
+/typst-d2-mcp
 *.test
 *.out
 coverage.txt
-go.sum
-typst-d2-prep
-*.test
-*.out
-coverage.txt
-go.sum
 
 # Temporary files
 *.tmp

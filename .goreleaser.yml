@@ -26,8 +26,26 @@ builds:
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
 
+  - id: typst-d2-mcp
+    main: ./cmd/typst-d2-mcp
+    binary: typst-d2-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.serverVersion={{.Version}}
+
 archives:
-  - id: typst-d2-prep
+  - id: default
     format: tar.gz
     name_template: >-
       {{ .ProjectName }}_

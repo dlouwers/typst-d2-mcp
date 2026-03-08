@@ -1,17 +1,31 @@
-# Typst D2 Preprocessor
+# Typst D2 Integration
 
-Render [D2 diagrams](https://d2lang.com) in [Typst](https://typst.app) documents **without any filesystem clutter** or intermediate files.
+Render [D2 diagrams](https://d2lang.com) in [Typst](https://typst.app) documents with two tools:
 
-## Features
+## Tools
+
+### 1. typst-d2-prep (CLI Preprocessor)
 
 - ✅ **Zero filesystem clutter** - No intermediate `.svg` files created
 - ✅ **Full D2 feature support** - All layouts (ELK, TALA, dagre), themes, sketch mode
 - ✅ **Inline syntax** - D2 code embedded directly in `.typ` files
 - ✅ **Simple workflow** - One command replaces `typst compile`
 
+### 2. typst-d2-mcp (MCP Server)
+
+- 🤖 **AI Assistant Integration** - Works with Claude Desktop, Cline, and other MCP clients
+- 🔧 **Four Tools Available**:
+  - `render_d2` - Render D2 diagrams to SVG
+  - `render_d2_base64` - Render and encode for Typst embedding
+  - `compile_typst_with_d2` - Full preprocessing pipeline
+  - `preprocess_typst` - Process Typst content with D2 blocks
+- 📝 **Direct from AI** - Generate diagrams and documents conversationally
+
 ## Quick Start
 
-### Installation
+### CLI Preprocessor (typst-d2-prep)
+
+#### Installation
 
 ```bash
 # Option 1: Homebrew (macOS/Linux)
@@ -35,26 +49,8 @@ typst-d2-prep version
 d2 --version
 # If not: curl -fsSL https://d2lang.com/install.sh | sh -s --
 ```
-# Option 1: Download pre-built binary from GitHub Releases
-# https://github.com/dlouwers/typst-d2-mcp/releases
 
-# Option 2: Build from source
-git clone https://github.com/dlouwers/typst-d2-mcp.git
-cd typst-d2-mcp
-go build -o typst-d2-prep ./cmd/typst-d2-prep
-
-# Option 3: Install with go install
-go install github.com/dlouwers/typst-d2-mcp/cmd/typst-d2-prep@latest
-
-# Verify installation
-typst-d2-prep version
-
-# Verify D2 is installed
-d2 --version
-# If not: curl -fsSL https://d2lang.com/install.sh | sh -s --
-```
-
-### Usage
+#### Usage
 
 **Your Typst file (document.typ):**
 
@@ -77,6 +73,65 @@ d2 --version
 ```bash
 typst-d2-prep compile document.typ
 # ✅ Creates document.pdf with embedded diagrams
+```
+
+### MCP Server (typst-d2-mcp)
+
+The MCP server provides AI assistants with tools to render D2 diagrams and compile Typst documents.
+
+#### Installation
+
+```bash
+# Build the MCP server
+cd typst-d2-mcp
+go build -o typst-d2-mcp ./cmd/typst-d2-mcp
+```
+
+#### Claude Desktop Configuration
+
+Add to your Claude Desktop config file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Linux**: `~/.config/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "typst-d2": {
+      "command": "/path/to/typst-d2-mcp/typst-d2-mcp"
+    }
+  }
+}
+```
+
+#### Available Tools
+
+1. **render_d2** - Render D2 diagram code to SVG
+   - Input: `d2_code` (required), `layout` (elk/dagre/tala), `theme`, `sketch`
+   - Output: SVG content
+
+2. **render_d2_base64** - Render D2 and encode as base64 for Typst
+   - Input: Same as `render_d2`
+   - Output: Base64 string + Typst code snippet
+
+3. **compile_typst_with_d2** - Full preprocessing and compilation
+   - Input: `file_path` (path to .typ file)
+   - Output: Compiled PDF path
+
+4. **preprocess_typst** - Process Typst content without compiling
+   - Input: `typst_content` (Typst source with #d2[...] blocks)
+   - Output: Processed Typst code with embedded diagrams
+
+#### Example Usage with Claude
+
+```
+User: "Render this D2 diagram: x -> y -> z"
+
+Claude uses render_d2 tool:
+- d2_code: "x -> y -> z"
+- layout: "elk"
+
+Returns SVG output
 ```
 
 ## How It Works
