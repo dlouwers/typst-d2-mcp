@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""
+typst-d2: Preprocessor for D2 diagrams in Typst documents
+Extracts D2 code blocks, renders them with the D2 CLI, and embeds SVGs inline.
+
+Usage:
+    typst-d2 compile input.typ [output.pdf]
+    typst-d2 watch input.typ
+"""
+
+import sys
+import subprocess
+import re
+import base64
+import tempfile
+import os
+from pathlib import Path
+
+def extract_d2_calls(content):
+    """
+    Find all #d2[...] or #d2(options)[...] calls in the Typst file.
+    Returns list of (match_obj, options_dict, code) tuples.
+    """
+    # Pattern: #d2(key: value, ...)[code] or #d2[code]
+    pattern = r'#d2(?:\((.*?)\))?\[(.*?)\]'
+    matches = []
+    
+    for match in re.finditer(pattern, content, re.DOTALL):
+        options_str = match.group(1) or ""
+        code = match.group(2)
+        
+        # Parse options (simple key: value parser)
+        options = {}
+        if options_str:
+            for opt in re.finditer(r'(\w+):\s*([^,\)]+)', options_str):
+                key = opt.group(1).strip()
+                value = opt.group(2).strip().strip('"\'')
+                options[key] = value
+        
+        matches.append((match, options, code))
+    
+    return matches
+
+def render_d2(code, options):
+    """
+    Render D2 code to SVG using the D2 CLI.
+    Streams stdin -> stdout, no temporary files.
+    """
+    cmd = ['d2']
+    
+    # Add options
+    layout = options.get('layout', 'elk')
+    if layout != 'elk':
+        cmd.append(f'--layout={layout}')
+    
+    if 'theme' in options:
+        cmd.append(f'--theme={options["theme"]}')
+    
+    if options.get('sketch') == 'true':
+        cmd.append('--sketch')
+    
+    if options.get('center') == 'true':
+        cmd.append('--center')
+    
+    if 'scale' in options and options['scale'] != 'auto':
+        cmd.append(f'--scale={options["scale"]}')
+    
+    # stdin -> stdout
+    cmd.extend(['-', '-'])
+    
+    try:
+        result = subprocess.run(
+            cmd,
+            input=code.encode('utf-8'),
+            capture_output=True,
+            check=True
+        )
+        return result.stdout.decode('utf-8')
+    except subprocess.CalledProcessError as e:
+        print(f"Error rendering D2 diagram:", file=sys.stderr)
+        print(e.stderr.decode('utf-8'), file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("Error: d2 command not found. Install from: https://d2lang.com/tour/install", file=sys.stderr)
+        sys.exit(1)
+
+def svg_to_typst_image(svg_content, options):
+    """
+    Convert SVG string to Typst image() call using base64 encoding.
+    Uses the @preview/based package for base64 decoding in Typst.
+    """
+    # Encode SVG as base64
+    svg_bytes = svg_content.encode('utf-8')
+    b64 = base64.b64encode(svg_bytes).decode('ascii')
+    
+    # Create Typst image call with based package decode
+    typst_code = f'#image(decode64("{b64}"), format: "svg")'
+    
+    # Add padding if specified
+    if 'pad' in options and options['pad'] != 'none':
+        pad_value = options['pad']
+        typst_code = f'#pad({pad_value}, {typst_code})'
+    
+    return typst_code
+
+def preprocess_file(input_path):
+    """
+    Preprocess a Typst file: replace all #d2[...] calls with embedded SVGs.
+    Adds based package import and removes lib.typ import.
+    Returns the modified content.
+    """
+    content = Path(input_path).read_text()
+    
+    # Remove #import "lib.typ" or similar d2 imports
+    content = re.sub(r'#import\s+["\'].*?lib\.typ["\'].*?\n', '', content)
+    
+    # Find all D2 calls
+    d2_calls = extract_d2_calls(content)
+    
+    if not d2_calls:
+        print("No D2 diagrams found in file.", file=sys.stderr)
+        return content
+    
+    print(f"Found {len(d2_calls)} D2 diagram(s), rendering...", file=sys.stderr)
+    
+    # Replace in reverse order to preserve match positions
+    for i, (match, options, code) in enumerate(reversed(d2_calls), 1):
+        print(f"  [{i}/{len(d2_calls)}] Rendering diagram...", file=sys.stderr)
+        
+        # Render D2 to SVG
+        svg = render_d2(code, options)
+        
+        # Convert to Typst image
+        typst_img = svg_to_typst_image(svg, options)
+        
+        # Replace in content
+        content = content[:match.start()] + typst_img + content[match.end():]
+    
+    # Add based package import at the top (after any existing imports)
+    based_import = '#import "@preview/based:0.2.0": decode64\n'
+    
+    # Check if based import already exists
+    if 'based' not in content:
+        # Find the position to insert (after last import or at start)
+        import_match = None
+        for match in re.finditer(r'^#import.*?$', content, re.MULTILINE):
+            import_match = match
+        
+        if import_match:
+            # Insert after last import
+            insert_pos = import_match.end() + 1  # +1 for newline
+            content = content[:insert_pos] + based_import + content[insert_pos:]
+        else:
+            # No imports found, insert at start
+            content = based_import + content
+    
+    print("✅ All diagrams rendered successfully", file=sys.stderr)
+    return content
+
+def compile_command(args):
+    """Handle: typst-d2 compile input.typ [output.pdf]"""
+    if len(args) < 1:
+        print("Usage: typst-d2 compile input.typ [output.pdf]", file=sys.stderr)
+        sys.exit(1)
+    
+    input_file = args[0]
+    output_file = args[1] if len(args) > 1 else None
+    
+    if not Path(input_file).exists():
+        print(f"Error: {input_file} not found", file=sys.stderr)
+        sys.exit(1)
+    
+    # Preprocess the file
+    processed_content = preprocess_file(input_file)
+    
+    # Write to temporary file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.typ', delete=False) as tmp:
+        tmp.write(processed_content)
+        tmp_path = tmp.name
+    
+    try:
+        # Compile with Typst
+        typst_cmd = ['typst', 'compile', tmp_path]
+        if output_file:
+            typst_cmd.append(output_file)
+        else:
+            # Default output: replace .typ with .pdf
+            output_file = str(Path(input_file).with_suffix('.pdf'))
+            typst_cmd.append(output_file)
+        
+        print(f"Compiling with Typst...", file=sys.stderr)
+        subprocess.run(typst_cmd, check=True)
+        print(f"✅ Created: {output_file}", file=sys.stderr)
+    finally:
+        # Clean up temporary file
+        os.unlink(tmp_path)
+
+def watch_command(args):
+    """Handle: typst-d2 watch input.typ"""
+    if len(args) < 1:
+        print("Usage: typst-d2 watch input.typ", file=sys.stderr)
+        sys.exit(1)
+    
+    input_file = args[0]
+    
+    # Use typst watch with preprocessing
+    print(f"Watching {input_file} for changes...", file=sys.stderr)
+    print("Note: Watch mode requires manual restart when D2 code changes", file=sys.stderr)
+    print("TODO: Implement file watcher", file=sys.stderr)
+    
+    # For now, just do a single compile
+    compile_command(args)
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+    
+    command = sys.argv[1]
+    args = sys.argv[2:]
+    
+    if command == 'compile':
+        compile_command(args)
+    elif command == 'watch':
+        watch_command(args)
+    else:
+        print(f"Unknown command: {command}", file=sys.stderr)
+        print(__doc__)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()

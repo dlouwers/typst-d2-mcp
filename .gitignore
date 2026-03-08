@@ -1,0 +1,30 @@
+# .gitignore for typst-d2-mcp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Typst output
+*.pdf
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test files
+test-*.typ
+test-*.pdf
+*-processed.typ
