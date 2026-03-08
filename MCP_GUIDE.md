@@ -199,6 +199,136 @@ The tool supports all D2 syntax features:
 ]
 ```
 
+## Best Practices for Diagram Layout
+
+### Understanding Page Constraints
+
+When creating diagrams, always consider the target page format:
+
+**A4 Portrait (default Typst):**
+- **Usable width:** ~17cm (limited horizontal space)
+- **Usable height:** ~25cm (ample vertical space)
+- **Best approach:** Vertical layouts (`direction: down`)
+- **Problem:** Wide horizontal diagrams get cramped, text becomes tiny and unreadable
+
+**A4 Landscape** (`#set page(flipped: true)`):
+- **Usable width:** ~25cm (ample horizontal space)
+- **Usable height:** ~17cm (limited vertical space)
+- **Best approach:** Horizontal layouts (`direction: right`)
+
+### Choosing Direction
+
+**Use `direction: down` (RECOMMENDED for most cases):**
+```typst
+#d2(layout: "elk", theme: "0")[
+  direction: down  // Vertical flow
+  
+  frontend -> backend -> database -> cache
+]
+```
+- ✅ Works well with A4 portrait (default)
+- ✅ Maximizes use of available page height
+- ✅ Prevents text from becoming too small
+- ✅ Better readability for complex diagrams with many nodes
+
+**Use `direction: right` (sparingly):**
+```typst
+#d2(layout: "elk", theme: "0")[
+  direction: right  // Horizontal flow
+  
+  user -> app -> db
+]
+```
+- ⚠️ Only for simple diagrams (≤5 nodes) or landscape pages
+- ⚠️ Can cause cramping on portrait pages
+- ✅ Good for wide organizational hierarchies on landscape
+
+### Rule of Thumb
+
+**If your diagram has more than 5 nodes at the same level, use `direction: down`.**
+
+**Bad (cramped on A4 portrait):**
+```typst
+#d2(layout: "elk", theme: "0")[
+  // No direction specified - defaults to horizontal
+  ceo
+  cto
+  cfo
+  coo
+  cmo
+  cto -> engineering
+  cfo -> finance
+  // ... gets wide and cramped
+]
+```
+
+**Good (readable on A4 portrait):**
+```typst
+#d2(layout: "elk", theme: "0")[
+  direction: down  // Vertical stacking
+  
+  ceo
+  cto
+  cfo
+  coo
+  cmo
+  cto -> engineering
+  cfo -> finance
+  // ... stacks vertically, plenty of space
+]
+```
+
+### Visual Verification Workflow
+
+After generating a document:
+
+1. **Open the PDF** to check diagram layout
+2. **Verify text is readable** - labels should not be tiny (<8pt)
+3. **Check margins** - diagrams should not touch page edges
+4. **Assess complexity** - if cramped, split into multiple diagrams or use `direction: down`
+
+If you cannot view the PDF yourself (as an AI assistant), **inform the user** to check the layout and suggest:
+- Adding `direction: down` if diagrams appear cramped
+- Splitting large diagrams into focused sub-diagrams
+- Reducing node count or simplifying structure
+
+### Splitting Large Diagrams
+
+Instead of one massive diagram:
+
+**Bad:**
+```typst
+#d2[
+  // 50 nodes in one diagram - unreadable!
+  frontend...
+  backend...
+  databases...
+  infrastructure...
+]
+```
+
+**Good:**
+```typst
+=== Frontend Architecture
+#d2(layout: "elk", theme: "0")[
+  direction: down
+  // 10-15 focused frontend nodes
+]
+
+=== Backend Services
+#d2(layout: "elk", theme: "0")[
+  direction: down
+  // 10-15 focused backend nodes
+]
+
+=== Data Layer
+#d2(layout: "elk", theme: "0")[
+  direction: down
+  // 10-15 focused data nodes
+]
+```
+
+
 ### Layout Engines
 
 - `elk` (default): Best for hierarchical layouts
