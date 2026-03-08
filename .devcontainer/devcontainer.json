@@ -16,5 +16,6 @@
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteEnv": {
     "GOTOOLCHAIN": "auto"
-  }
+  },
+  "remoteUser": "vscode"
 }

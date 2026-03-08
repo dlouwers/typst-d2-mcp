@@ -13,3 +13,7 @@ RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
     go install github.com/fzipp/gocyclo/cmd/gocyclo@latest && \
     go install github.com/gordonklaus/ineffassign@latest && \
     go install github.com/client9/misspell/cmd/misspell@latest
+
+# Fix Go module cache permissions for vscode user
+RUN mkdir -p /go/pkg/mod /go/pkg/sumdb && \
+    chown -R vscode:vscode /go
