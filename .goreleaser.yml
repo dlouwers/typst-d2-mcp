@@ -90,3 +90,19 @@ brews:
       bin.install "typst-d2-prep"
     test: |
       system "#{bin}/typst-d2-prep", "version"
+
+  - name: typst-d2-mcp
+    repository:
+      owner: dlouwers
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/dlouwers/typst-d2-mcp"
+    description: "MCP server for AI-assisted Typst documentation with D2 diagrams"
+    license: "MIT"
+    dependencies:
+      - name: d2
+      - name: typst
+    install: |
+      bin.install "typst-d2-mcp"
+    test: |
+      system "#{bin}/typst-d2-mcp", "--help"

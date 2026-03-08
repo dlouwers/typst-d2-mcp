@@ -79,9 +79,19 @@ The MCP server provides AI assistants with tools to render D2 diagrams and compi
 #### Installation
 
 ```bash
-# Build the MCP server
+# Option 1: Homebrew (macOS/Linux)
+brew install dlouwers/tap/typst-d2-mcp
+
+# Option 2: Download pre-built binary from GitHub Releases
+# https://github.com/dlouwers/typst-d2-mcp/releases
+
+# Option 3: Build from source
+git clone https://github.com/dlouwers/typst-d2-mcp.git
 cd typst-d2-mcp
 go build -o typst-d2-mcp ./cmd/typst-d2-mcp
+
+# Option 4: Install with go install
+go install github.com/dlouwers/typst-d2-mcp/cmd/typst-d2-mcp@latest
 ```
 
 #### Claude Desktop Configuration
@@ -95,11 +105,13 @@ Add to your Claude Desktop config file:
 {
   "mcpServers": {
     "typst-d2": {
-      "command": "/path/to/typst-d2-mcp/typst-d2-mcp"
+      "command": "/opt/homebrew/bin/typst-d2-mcp"
     }
   }
 }
 ```
+
+**Note:** If installed via Homebrew, the binary is at `/opt/homebrew/bin/typst-d2-mcp` (macOS ARM) or `/usr/local/bin/typst-d2-mcp` (macOS Intel/Linux). Adjust path if built from source.
 
 #### Available Tool
 
