@@ -10,7 +10,7 @@ import (
 	"github.com/dlouwers/typst-d2-mcp/internal/prerequisites"
 )
 
-const version = "0.1.0"
+var version = "0.1.0" // Overridden by ldflags during release builds
 
 func main() {
 	if len(os.Args) < 2 {
