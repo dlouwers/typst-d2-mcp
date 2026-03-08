@@ -62,7 +62,6 @@ brews:
       owner: dlouwers
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    folder: Formula
     homepage: "https://github.com/dlouwers/typst-d2-mcp"
     description: "Preprocessor for D2 diagrams in Typst documents"
     license: "MIT"
