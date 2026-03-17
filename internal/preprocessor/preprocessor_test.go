@@ -168,6 +168,16 @@ func TestAddBasedImport(t *testing.T) {
 			want:    `#import "@preview/based:0.2.0": decode64` + "\n\n= Hello",
 		},
 		{
+			name:    "already has based import (different version)",
+			content: `#import "@preview/based:0.3.0": decode64` + "\n\n= Hello",
+			want:    `#import "@preview/based:0.3.0": decode64` + "\n\n= Hello",
+		},
+		{
+			name:    "already has based import (with spaces)",
+			content: `#import  "@preview/based:1.0.0" :  decode64` + "\n\n= Hello",
+			want:    `#import  "@preview/based:1.0.0" :  decode64` + "\n\n= Hello",
+		},
+		{
 			name:    "multiple imports",
 			content: "#import \"a.typ\": x\n#import \"b.typ\": y\n\n= Hello",
 			want:    "#import \"a.typ\": x\n#import \"b.typ\": y\n" + `#import "@preview/based:0.2.0": decode64` + "\n\n= Hello",

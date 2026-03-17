@@ -147,8 +147,9 @@ func svgToTypstImage(svgContent string, options d2.Options) string {
 func addBasedImport(content string) string {
 	basedImport := `#import "@preview/based:0.2.0": decode64` + "\n"
 
-	// Check if based import already exists
-	if strings.Contains(content, "based") {
+	// Check if based import already exists (any version)
+	basedImportPattern := regexp.MustCompile(`#import\s+"@preview/based:[^"]+"\s*:\s*decode64`)
+	if basedImportPattern.MatchString(content) {
 		return content
 	}
 
