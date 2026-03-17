@@ -1,5 +1,11 @@
 # Typst D2 Integration
 
+[![GitHub Release](https://img.shields.io/github/v/release/dlouwers/typst-d2-mcp?style=flat-square&logo=github)](https://github.com/dlouwers/typst-d2-mcp/releases/latest)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/dlouwers/typst-d2-mcp?style=flat-square&logo=go)](https://go.dev/)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/dlouwers/typst-d2-mcp/release.yml?style=flat-square&logo=github-actions&label=release)](https://github.com/dlouwers/typst-d2-mcp/actions/workflows/release.yml)
+[![License](https://img.shields.io/github/license/dlouwers/typst-d2-mcp?style=flat-square)](LICENSE)
+[![Issues](https://img.shields.io/github/issues/dlouwers/typst-d2-mcp?style=flat-square)](https://github.com/dlouwers/typst-d2-mcp/issues)
+
 Render [D2 diagrams](https://d2lang.com) in [Typst](https://typst.app) documents with two tools:
 
 ## Tools
