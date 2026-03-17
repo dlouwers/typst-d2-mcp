@@ -1,6 +1,6 @@
 module github.com/dlouwers/typst-d2-mcp
 
-go 1.25.0
+go 1.23.0
 
 require github.com/mark3labs/mcp-go v0.45.0
 
