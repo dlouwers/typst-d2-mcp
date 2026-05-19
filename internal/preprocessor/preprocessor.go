@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -55,16 +56,15 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 	d2Blocks := extractD2Calls(content)
 
 	if len(d2Blocks) == 0 {
-		fmt.Fprintf(os.Stderr, "No D2 diagrams found in file.\n")
+		slog.DebugContext(ctx, "no d2 blocks in input")
 		return content, nil
 	}
 
-	fmt.Fprintf(os.Stderr, "Found %d D2 diagram(s), rendering...\n", len(d2Blocks))
+	slog.DebugContext(ctx, "rendering d2 blocks", "count", len(d2Blocks))
 
 	// Replace in reverse order to preserve positions
 	for i := len(d2Blocks) - 1; i >= 0; i-- {
 		block := d2Blocks[i]
-		fmt.Fprintf(os.Stderr, "  [%d/%d] Rendering diagram...\n", len(d2Blocks)-i, len(d2Blocks))
 
 		// Render D2 to SVG
 		svg, err := d2.Render(ctx, block.Code, block.Options)
@@ -82,7 +82,6 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 	// Add based package import
 	content = addBasedImport(content)
 
-	fmt.Fprintf(os.Stderr, "✅ All diagrams rendered successfully\n")
 	return content, nil
 }
 
