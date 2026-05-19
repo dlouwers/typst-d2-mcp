@@ -14,9 +14,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
-// Result label values for the compile and put_file counters. Using
-// constants keeps the set closed so a typo in a handler turns into
-// a build failure rather than a quietly mis-attributed counter.
+// Result label values for the compile, put_file, and pdf-download
+// counters. Using constants keeps the set closed so a typo in a
+// handler turns into a build failure rather than a quietly
+// mis-attributed counter.
 const (
 	ResultOK            = "ok"
 	ResultFail          = "fail"
@@ -24,6 +25,7 @@ const (
 	ResultTimeout       = "timeout"
 	ResultTooLarge      = "too_large"
 	ResultDecodeError   = "decode_error"
+	ResultNotFound      = "not_found"
 )
 
 var (
@@ -72,4 +74,12 @@ var (
 		Name: "typst_d2_mcp_auth_rejected_total",
 		Help: "HTTP requests rejected by the Bearer-auth middleware.",
 	})
+
+	// PDFDownloadTotal counts GET /d/{token} attempts by result. The
+	// "not_found" label includes both unknown and expired tokens —
+	// they are indistinguishable on the wire by design.
+	PDFDownloadTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "typst_d2_mcp_pdf_download_total",
+		Help: "Capability-URL PDF download attempts by terminal result.",
+	}, []string{"result"})
 )
