@@ -62,9 +62,23 @@ spec:
                 name: typst-d2-mcp-config
             - secretRef:
                 name: typst-d2-mcp-secrets
+          env:
+            # readOnlyRootFilesystem=true means /home/nonroot (the
+            # distroless default $HOME) isn't writable, which breaks
+            # typst's package cache for @preview/based and its font
+            # index. Point $HOME at a subdir of the persistent
+            # volume so the cache survives pod restarts.
+            - name: HOME
+              value: /var/lib/typst-d2-mcp/home
           volumeMounts:
             - name: data
               mountPath: /var/lib/typst-d2-mcp
+            # os.CreateTemp("", …) in the compile handler writes a
+            # staged .typ file under /tmp. An in-memory emptyDir
+            # gives us a small, fast scratch surface while keeping
+            # the root filesystem read-only.
+            - name: tmp
+              mountPath: /tmp
           # /healthz is a static 200 — fine for both probes.
           readinessProbe:
             httpGet:
@@ -98,3 +112,7 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: typst-d2-mcp-data
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
