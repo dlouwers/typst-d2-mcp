@@ -38,4 +38,4 @@ patches:
 #   kustomize edit set image ghcr.io/dlouwers/typst-d2-mcp=ghcr.io/dlouwers/typst-d2-mcp:sha-abc1234
 images:
   - name: ghcr.io/dlouwers/typst-d2-mcp
-    newTag: v0.1.0 # {"$imagepolicy": "flux-system:typst-d2-mcp-prod:tag"}
+    newTag: v2.0.0 # {"$imagepolicy": "flux-system:typst-d2-mcp-prod:tag"}
