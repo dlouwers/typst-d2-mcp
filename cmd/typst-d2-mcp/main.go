@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/preprocessor"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
@@ -21,19 +23,63 @@ const (
 	serverName    = "typst-d2-mcp"
 	serverVersion = "1.0.0"
 
-	envTransport = "TYPST_D2_MCP_TRANSPORT"
-	envAddr      = "TYPST_D2_MCP_ADDR"
-	envPath      = "TYPST_D2_MCP_PATH"
-	envWorkspace = "TYPST_D2_MCP_WORKSPACE"
+	envTransport      = "TYPST_D2_MCP_TRANSPORT"
+	envAddr           = "TYPST_D2_MCP_ADDR"
+	envPath           = "TYPST_D2_MCP_PATH"
+	envWorkspace      = "TYPST_D2_MCP_WORKSPACE"
+	envCompileTimeout = "TYPST_D2_MCP_COMPILE_TIMEOUT"
+	envMaxInputBytes  = "TYPST_D2_MCP_MAX_INPUT_BYTES"
 
-	defaultAddr = ":8080"
-	defaultPath = "/mcp"
+	defaultAddr           = ":8080"
+	defaultPath           = "/mcp"
+	defaultCompileTimeout = 30 * time.Second
+	defaultMaxInputBytes  = int64(1 << 20) // 1 MiB
 
 	// pdfURIPrefix is the scheme + host used by the compile tool when it
 	// returns a ResourceLink for the produced PDF. Clients can fetch the
 	// bytes via the standard MCP resources/read call against this URI.
 	pdfURIPrefix = "typst-d2://pdf/"
 )
+
+// compileTimeout reads the configured per-compile budget. A value of zero
+// disables the extra timeout and leaves the calling request context in
+// charge.
+func compileTimeout() time.Duration {
+	return durationEnv(envCompileTimeout, defaultCompileTimeout)
+}
+
+// maxInputBytes is the upper bound on accepted file content (both the
+// .typ file fed to compile_typst_with_d2 and the decoded content written
+// by put_file). It bounds memory + parser work before any d2/typst exec.
+func maxInputBytes() int64 {
+	return int64Env(envMaxInputBytes, defaultMaxInputBytes)
+}
+
+func durationEnv(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		fmt.Fprintf(os.Stderr, "%s: invalid duration %q, using default %s\n", key, v, def)
+		return def
+	}
+	return d
+}
+
+func int64Env(key string, def int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 {
+		fmt.Fprintf(os.Stderr, "%s: invalid integer %q, using default %d\n", key, v, def)
+		return def
+	}
+	return n
+}
 
 // serverInstructions is sent once at the MCP initialize handshake. Moving
 // this guidance out of the per-tool description keeps it available to the
@@ -261,8 +307,29 @@ func handleCompileTypst(resolver workspace.Resolver) server.ToolHandlerFunc {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
-		processed, err := preprocessor.Preprocess(resolver, filePath)
+		if info, err := os.Stat(resolvedIn); err == nil {
+			if limit := maxInputBytes(); info.Size() > limit {
+				return mcp.NewToolResultError(fmt.Sprintf(
+					"input file too large: %d bytes (limit %d, set %s to raise)",
+					info.Size(), limit, envMaxInputBytes,
+				)), nil
+			}
+		}
+
+		if tmo := compileTimeout(); tmo > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, tmo)
+			defer cancel()
+		}
+
+		processed, err := preprocessor.Preprocess(ctx, resolver, filePath)
 		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return mcp.NewToolResultError(fmt.Sprintf(
+					"compile exceeded %s (set %s to raise)",
+					compileTimeout(), envCompileTimeout,
+				)), nil
+			}
 			return mcp.NewToolResultErrorFromErr("Preprocessing failed", err), nil
 		}
 
@@ -283,6 +350,12 @@ func handleCompileTypst(resolver workspace.Resolver) server.ToolHandlerFunc {
 		cmd := exec.CommandContext(ctx, "typst", "compile", tmpFile.Name(), resolvedOut)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return mcp.NewToolResultError(fmt.Sprintf(
+					"compile exceeded %s (set %s to raise)",
+					compileTimeout(), envCompileTimeout,
+				)), nil
+			}
 			errMsg := fmt.Sprintf("Typst compilation failed: %s\nOutput: %s", err.Error(), string(output))
 			return mcp.NewToolResultError(errMsg), nil
 		}
@@ -335,6 +408,13 @@ func handlePutFile(resolver workspace.Resolver) server.ToolHandlerFunc {
 			data = d
 		default:
 			return mcp.NewToolResultError(fmt.Sprintf("unknown encoding %q (expected utf8 or base64)", encoding)), nil
+		}
+
+		if limit := maxInputBytes(); int64(len(data)) > limit {
+			return mcp.NewToolResultError(fmt.Sprintf(
+				"content too large: %d bytes (limit %d, set %s to raise)",
+				len(data), limit, envMaxInputBytes,
+			)), nil
 		}
 
 		if _, err := workspace.WriteFile(resolver, path, data); err != nil {
