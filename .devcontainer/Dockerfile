@@ -1,5 +1,10 @@
 FROM mcr.microsoft.com/devcontainers/go:1.25
 
+# Let `go install` auto-fetch a newer toolchain when a tool (e.g. gopls)
+# requires Go > 1.25. The same setting is applied at runtime via
+# devcontainer.json's remoteEnv.
+ENV GOTOOLCHAIN=auto
+
 # Install D2
 RUN curl -fsSL https://d2lang.com/install.sh | sh -s --
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/preprocessor"
+	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -15,134 +16,141 @@ import (
 const (
 	serverName    = "typst-d2-mcp"
 	serverVersion = "1.0.0"
+
+	envTransport = "TYPST_D2_MCP_TRANSPORT"
+	envAddr      = "TYPST_D2_MCP_ADDR"
+	envPath      = "TYPST_D2_MCP_PATH"
+
+	defaultAddr = ":8080"
+	defaultPath = "/mcp"
 )
 
-func main() {
-	// Create MCP server
-	s := server.NewMCPServer(
-		serverName,
-		serverVersion,
-		server.WithToolCapabilities(false),
-	)
+// serverInstructions is sent once at the MCP initialize handshake. Moving
+// this guidance out of the per-tool description keeps it available to the
+// model without re-spending tokens on every tool call. Keep it focused on
+// strategy and anti-patterns the model needs across multiple compiles;
+// the per-call rule lives in the tool description.
+const serverInstructions = `You can author Typst documents containing #d2[...] blocks and compile them
+to PDF with the compile_typst_with_d2 tool. The notes below apply across
+every diagram in a session — the tool description itself stays brief.
 
-	// Register tools
-	registerTools(s)
+DIAGRAM LAYOUT — A4 PORTRAIT (Typst default):
+  Usable area is roughly 17cm wide × 25cm tall, so vertical layouts breathe
+  while horizontal layouts get cramped. Prefer "direction: down" inside the
+  D2 block whenever a diagram has more than a handful of nodes.
 
-	// Run stdio server
-	if err := server.ServeStdio(s); err != nil {
-		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
-		os.Exit(1)
-	}
-}
+STAR-TOPOLOGY ANTI-PATTERN:
+  A central node connecting to 5+ siblings forces the ELK layout engine to
+  spread the children horizontally even when "direction: down" is set. The
+  fix is a vertical chain:
 
-func registerTools(s *server.MCPServer) {
-	// Single tool: Compile Typst document with embedded D2 diagrams
-	compileTypstTool := mcp.NewTool("compile_typst_with_d2",
-		mcp.WithDescription(`Create and compile Typst documents with embedded D2 diagrams.
+      // BAD (renders horizontally on A4 portrait)
+      center -> a
+      center -> b
+      center -> c
+      center -> d
+      center -> e
 
-This tool processes Typst documents containing #d2[...] blocks and compiles them to PDF.
+      // GOOD
+      center -> a -> b -> c -> d -> e
 
-CRITICAL - DIAGRAM LAYOUT STRATEGY:
-Before creating diagrams, consider the page format and diagram complexity:
+  Org charts with two or three direct reports can stay as a star; four or
+  more children means convert to a chain or split into multiple diagrams.
 
-For A4 Portrait (default Typst):
-  - WIDTH: ~17cm usable (limited horizontal space)
-  - HEIGHT: ~25cm usable (ample vertical space)
-  - BEST: Use 'direction: down' (vertical) for complex diagrams with many nodes
-  - AVOID: Wide horizontal layouts - they get cramped and text becomes tiny
-  - RULE: If diagram has >5 nodes at same level, use vertical direction
+A4 LANDSCAPE (#set page(flipped: true)):
+  Usable area becomes ~25cm × 17cm. Prefer "direction: right" for wide
+  hierarchies; vertical chains still work but waste horizontal space.
 
-CRITICAL ANTI-PATTERN - STAR TOPOLOGY:
-  - Problem: One central node connecting to 5+ nodes creates horizontal spread
-  - Example BAD:
-      center -> node1
-      center -> node2
-      center -> node3
-      center -> node4
-      center -> node5
-    Result: Even with 'direction: down', ELK lays out node1-5 HORIZONTALLY
-  - Solution: Use VERTICAL CHAIN instead:
-      center -> node1 -> node2 -> node3 -> node4 -> node5
-    Result: True vertical layout, readable on A4 portrait
-  - When to use chain: Star with 4+ branches = convert to vertical chain
-  - Exception: Org charts with 2-3 direct reports can stay as star
-
-For A4 Landscape (set with #set page(flipped: true)):
-  - WIDTH: ~25cm usable (ample horizontal space)
-  - HEIGHT: ~17cm usable (limited vertical space)
-  - BEST: Use 'direction: right' (horizontal) for wide hierarchies
-
-Direction control in D2:
-  - Add 'direction: down' at top of diagram for vertical flow (RECOMMENDED for portrait)
-  - Add 'direction: right' at top of diagram for horizontal flow (use sparingly)
-  - ELK layout respects direction hints and produces best results
-
-VISUAL VERIFICATION (STRONGLY RECOMMENDED):
-After compilation, if you have access to visual tools:
-  1. Open the generated PDF to verify diagram readability
-  2. Check that text labels are readable (not too small)
-  3. Verify diagram fits within page margins without crowding
-  4. If diagram is cramped: reduce nodes, split into multiple diagrams, or use direction: down
-  5. If you cannot view the PDF yourself, inform the user about potential layout issues
-
-BEST PRACTICES:
-- Use D2 diagrams for system architectures, flowcharts, ERDs, and technical illustrations
-- Embed diagrams directly in Typst using #d2[...] syntax - no separate files needed
-- ALWAYS use layout: "elk" (best automatic layout engine)
-- ALWAYS use theme: "0" for print-friendly white backgrounds with good contrast
-- For print: avoid dark themes (100-200 range) - they have poor contrast on white paper
-- For complex diagrams: use 'direction: down' to maximize use of A4 portrait height
-- Split very large diagrams into multiple smaller, focused diagrams rather than cramming everything
-- Supports all D2 features: layouts (elk/dagre/tala), themes, sketch mode, containers
-- Clean output: diagrams are base64-encoded SVGs, no filesystem clutter
+PRINT-FRIENDLY DEFAULTS:
+  - layout: "elk"  (best automatic layout)
+  - theme: "0"     (white background, good contrast on paper)
+  - Avoid dark themes (100–200 range) for print.
 
 SYNTAX EXAMPLES:
-  Basic diagram (print-friendly, vertical for portrait):
+  Basic:
     #d2(layout: "elk", theme: "0")[
       direction: down
       client -> server -> database
     ]
 
-  With shapes and custom styling (optimized for A4 portrait):
+  Architecture with shapes:
     #d2(layout: "elk", theme: "0")[
       direction: down
-      
       frontend: Frontend {shape: rectangle}
-      backend: Backend {shape: rectangle}
+      backend:  Backend  {shape: rectangle}
       database: Database {shape: cylinder}
-      
       frontend -> backend: API calls
-      backend -> database: Queries
+      backend  -> database: Queries
     ]
 
-  Large organizational hierarchy (MUST use vertical direction):
-    #d2(layout: "elk", theme: "0")[
-      direction: down  // CRITICAL for readability in portrait
-      
-      board: "Board of Directors" {
-        shape: rectangle
-        style.fill: "#e8f4f8"
-      }
-      
-      exec: "Executive Team" {
-        ceo: "CEO"
-        cto: "CTO"
-        cfo: "CFO"
-      }
-      
-      board -> exec
-    ]
+VERIFYING THE RESULT:
+  After a successful compile, open the produced PDF if you can. Check that
+  text labels are readable and the diagram fits within page margins. If a
+  diagram looks cramped, add "direction: down", split it into multiple
+  diagrams, or remove non-essential nodes. If you cannot view the PDF
+  yourself, advise the user to inspect it.`
 
-TYPICAL WORKFLOW:
-1. Analyze diagram requirements: How many nodes? How complex?
-2. Choose direction: 'down' for A4 portrait (default), 'right' only if landscape or simple
-3. Write Typst content with #d2[...] blocks for diagrams
-4. Save to a .typ file
-5. Call this tool with the file path
-6. IF POSSIBLE: Visually verify the PDF to check diagram layout and readability
-7. If diagram is cramped: add 'direction: down' or split into multiple diagrams
+func main() {
+	s := server.NewMCPServer(
+		serverName,
+		serverVersion,
+		server.WithToolCapabilities(false),
+		server.WithInstructions(serverInstructions),
+	)
 
-The tool encourages rich, visual documentation using D2's declarative diagram syntax.`),
+	registerTools(s)
+
+	if err := serve(s); err != nil {
+		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// serve selects a transport based on TYPST_D2_MCP_TRANSPORT. Default is
+// stdio, preserving the previously installed behavior. Setting the env to
+// "http" starts a streamable-HTTP MCP server on TYPST_D2_MCP_ADDR
+// (default :8080) at TYPST_D2_MCP_PATH (default /mcp).
+func serve(s *server.MCPServer) error {
+	switch transport := strings.ToLower(os.Getenv(envTransport)); transport {
+	case "", "stdio":
+		return server.ServeStdio(s)
+	case "http", "streamable-http":
+		addr := os.Getenv(envAddr)
+		if addr == "" {
+			addr = defaultAddr
+		}
+		path := os.Getenv(envPath)
+		if path == "" {
+			path = defaultPath
+		}
+		httpSrv := server.NewStreamableHTTPServer(s, server.WithEndpointPath(path))
+		fmt.Fprintf(os.Stderr, "%s listening on http://%s%s\n", serverName, addr, path)
+		return httpSrv.Start(addr)
+	default:
+		return fmt.Errorf("unknown %s=%q (expected stdio or http)", envTransport, transport)
+	}
+}
+
+func registerTools(s *server.MCPServer) {
+	// The bulk of the layout strategy lives in server instructions above so
+	// it isn't re-sent on every tool call. The description below carries
+	// only the rules the model needs at the moment it decides to call.
+	compileTypstTool := mcp.NewTool("compile_typst_with_d2",
+		mcp.WithDescription(`Compile a Typst document containing #d2[...] diagram blocks to PDF.
+
+The input file is preprocessed in place: each #d2(opts)[code] block is
+rendered to SVG via the d2 CLI, base64-embedded, and the resulting Typst
+source is compiled with the typst CLI. The output PDF is written next to
+the input .typ file.
+
+Quick rules (full strategy in the server's instructions):
+  - Default layout "elk", theme "0" for print-friendly diagrams.
+  - On A4 portrait, add 'direction: down' inside the D2 block.
+  - A central node with 4+ children renders horizontally even with
+    'direction: down' — rewrite as a vertical chain.
+
+After compiling, inspect the PDF if you can; if a diagram looks cramped,
+split it, simplify it, or switch to 'direction: down'.`),
 		mcp.WithString("file_path",
 			mcp.Required(),
 			mcp.Description("Absolute path to the Typst source file (.typ) containing #d2[...] blocks"),
@@ -150,24 +158,24 @@ The tool encourages rich, visual documentation using D2's declarative diagram sy
 	)
 	s.AddTool(compileTypstTool, handleCompileTypst)
 }
+
 func handleCompileTypst(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	filePath, err := request.RequireString("file_path")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		return mcp.NewToolResultError(fmt.Sprintf("File not found: %s", filePath)), nil
+	resolver := workspace.LocalFS{}
+	resolved, err := workspace.MustExist(resolver, filePath)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	// Preprocess file (reads from disk)
-	processed, err := preprocessor.PreprocessFile(filePath)
+	processed, err := preprocessor.Preprocess(resolver, resolved)
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("Preprocessing failed", err), nil
 	}
 
-	// Create temporary file with processed content
 	tmpFile, err := os.CreateTemp("", "typst-d2-*.typ")
 	if err != nil {
 		return mcp.NewToolResultErrorFromErr("Failed to create temp file", err), nil
@@ -179,10 +187,8 @@ func handleCompileTypst(ctx context.Context, request mcp.CallToolRequest) (*mcp.
 	}
 	tmpFile.Close()
 
-	// Determine output path
-	outPath := strings.TrimSuffix(filePath, ".typ") + ".pdf"
+	outPath := strings.TrimSuffix(resolved, ".typ") + ".pdf"
 
-	// Compile with Typst
 	cmd := exec.CommandContext(ctx, "typst", "compile", tmpFile.Name(), outPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -190,7 +196,6 @@ func handleCompileTypst(ctx context.Context, request mcp.CallToolRequest) (*mcp.
 		return mcp.NewToolResultError(errMsg), nil
 	}
 
-	
 	successMsg := fmt.Sprintf("Successfully compiled to %s\n\n", outPath)
 	successMsg += "NEXT STEPS:\n"
 	successMsg += "1. Open the PDF to verify diagram layout and readability\n"
@@ -201,6 +206,6 @@ func handleCompileTypst(ctx context.Context, request mcp.CallToolRequest) (*mcp.
 	successMsg += "   - Split large diagrams into multiple focused diagrams\n"
 	successMsg += "   - Reduce number of nodes or simplify structure\n"
 	successMsg += "\nIf you cannot view the PDF yourself, inform the user to check the layout."
-	
+
 	return mcp.NewToolResultText(successMsg), nil
 }

@@ -39,8 +39,11 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
-      - name: Build
+      - name: Build typst-d2-prep
         run: go build -v ./cmd/typst-d2-prep
+
+      - name: Build typst-d2-mcp
+        run: go build -v ./cmd/typst-d2-mcp
 
       - name: Lint
         uses: golangci/golangci-lint-action@v6

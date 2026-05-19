@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/d2"
+	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 )
 
 // D2Block represents a parsed D2 diagram block from the Typst file.
@@ -20,10 +21,24 @@ type D2Block struct {
 	Code    string
 }
 
-// PreprocessFile reads a Typst file, processes all D2 blocks, and returns the modified content.
+// PreprocessFile reads a Typst file from the local filesystem, processes all
+// D2 blocks, and returns the modified content. It is a back-compat wrapper
+// around Preprocess that uses workspace.LocalFS as the resolver, preserving
+// the original behavior used by the typst-d2-prep CLI.
 func PreprocessFile(inputPath string) (string, error) {
-	// Read file content
-	contentBytes, err := os.ReadFile(inputPath)
+	return Preprocess(workspace.LocalFS{}, inputPath)
+}
+
+// Preprocess resolves inputPath through the supplied workspace.Resolver,
+// reads the resulting file, processes all D2 blocks, and returns the
+// modified Typst content. Callers in HTTP mode pass a tenant-scoped
+// resolver; the stdio path passes workspace.LocalFS.
+func Preprocess(r workspace.Resolver, inputPath string) (string, error) {
+	resolved, err := r.Resolve(inputPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	contentBytes, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
