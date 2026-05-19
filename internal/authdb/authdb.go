@@ -26,6 +26,10 @@ import (
 // plaintext does not match any stored hash.
 var ErrInvalidKey = errors.New("invalid api key")
 
+// ErrQuotaExceeded is returned by IncrementCompile when the caller
+// has already reached the configured per-day quota.
+var ErrQuotaExceeded = errors.New("quota exceeded")
+
 // keyPrefix tags every plaintext key so support / logging code can
 // recognise leaks at a glance and operators can grep for them.
 const keyPrefix = "ttd2_"
@@ -69,6 +73,12 @@ CREATE TABLE IF NOT EXISTS api_keys (
   key_hash     BLOB    NOT NULL UNIQUE,
   created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_used_at TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS compiles (
+  user_id  TEXT    NOT NULL,
+  utc_date TEXT    NOT NULL,
+  count    INTEGER NOT NULL,
+  PRIMARY KEY(user_id, utc_date)
 );
 `
 	_, err := s.db.Exec(ddl)
@@ -153,4 +163,48 @@ WHERE k.key_hash = ?
 		GitHubLogin: githubLogin,
 		Email:       email.String,
 	}, nil
+}
+
+// IncrementCompile atomically reads the user's compile count for
+// utcDate and increments it. It returns ErrQuotaExceeded if the count
+// already equals or exceeds limit before the increment; in that case
+// no row is changed. A limit <= 0 is treated as "no quota" and the
+// call returns nil without touching the database.
+//
+// utcDate is the caller-supplied YYYY-MM-DD string for the day the
+// compile is attributed to. Passing it explicitly (rather than
+// computing it inside the store) lets tests cover day-rollover
+// without waiting for midnight.
+func (s *Store) IncrementCompile(ctx context.Context, userID, utcDate string, limit int) error {
+	if limit <= 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var count int
+	err = tx.QueryRowContext(ctx,
+		`SELECT count FROM compiles WHERE user_id = ? AND utc_date = ?`,
+		userID, utcDate,
+	).Scan(&count)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read compile count: %w", err)
+	}
+	if count >= limit {
+		return ErrQuotaExceeded
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO compiles(user_id, utc_date, count) VALUES(?, ?, 1)
+ON CONFLICT(user_id, utc_date) DO UPDATE SET count = count + 1
+`, userID, utcDate); err != nil {
+		return fmt.Errorf("upsert compile count: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
 }

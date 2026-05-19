@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -39,11 +40,13 @@ const (
 	envPublicURL    = "TYPST_D2_MCP_PUBLIC_URL"
 	envGitHubID     = "TYPST_D2_MCP_GITHUB_CLIENT_ID"
 	envGitHubSecret = "TYPST_D2_MCP_GITHUB_CLIENT_SECRET"
+	envQuotaPerDay  = "TYPST_D2_MCP_QUOTA_PER_DAY"
 
 	defaultAddr           = ":8080"
 	defaultPath           = "/mcp"
 	defaultCompileTimeout = 30 * time.Second
 	defaultMaxInputBytes  = int64(1 << 20) // 1 MiB
+	defaultQuotaPerDay    = 1
 
 	// pdfURIPrefix is the scheme + host used by the compile tool when it
 	// returns a ResourceLink for the produced PDF. Clients can fetch the
@@ -63,6 +66,14 @@ func compileTimeout() time.Duration {
 // by put_file). It bounds memory + parser work before any d2/typst exec.
 func maxInputBytes() int64 {
 	return int64Env(envMaxInputBytes, defaultMaxInputBytes)
+}
+
+// quotaPerDay is the per-user UTC-day ceiling on successful compile
+// attempts; 0 disables the check. Only enforced for non-anonymous
+// identities (i.e. authenticated users), so self-hosted single-tenant
+// deployments stay unmetered.
+func quotaPerDay() int {
+	return int(int64Env(envQuotaPerDay, int64(defaultQuotaPerDay)))
 }
 
 func durationEnv(key string, def time.Duration) time.Duration {
@@ -163,7 +174,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	backend, ghHandlers, closer, err := selectAuth()
+	backend, ghHandlers, store, closer, err := selectAuth()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Auth setup: %v\n", err)
 		os.Exit(1)
@@ -180,10 +191,10 @@ func main() {
 		server.WithInstructions(serverInstructions),
 	)
 
-	registerTools(s, factory)
+	registerTools(s, factory, store)
 	registerResources(s, factory)
 
-	fmt.Fprintf(os.Stderr, "%s: auth=%s\n", serverName, backend.Name())
+	fmt.Fprintf(os.Stderr, "%s: auth=%s quota_per_day=%d\n", serverName, backend.Name(), quotaPerDay())
 
 	if err := serve(s, backend, ghHandlers); err != nil {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
@@ -231,28 +242,30 @@ func selectFactory() (workspace.Factory, error) {
 	return workspace.TenantFactory{Root: abs}, nil
 }
 
-// selectAuth picks the active auth.Backend and, for the GitHub backend,
-// returns its HTTP handlers and a cleanup closure (the SQLite store).
-func selectAuth() (auth.Backend, *gitHubHandlers, func(), error) {
+// selectAuth picks the active auth.Backend and, for the GitHub
+// backend, returns its HTTP handlers, the shared SQLite store (used by
+// both auth lookups and the compile-quota counter), and a cleanup
+// closure that closes the store. For AUTH=none the store is nil.
+func selectAuth() (auth.Backend, *gitHubHandlers, *authdb.Store, func(), error) {
 	mode := strings.ToLower(os.Getenv(envAuth))
 	switch mode {
 	case "", "none":
-		return auth.None{}, nil, nil, nil
+		return auth.None{}, nil, nil, nil, nil
 	case "github":
 		dbPath := os.Getenv(envDB)
 		if dbPath == "" {
-			return nil, nil, nil, fmt.Errorf("%s=github requires %s to be set", envAuth, envDB)
+			return nil, nil, nil, nil, fmt.Errorf("%s=github requires %s to be set", envAuth, envDB)
 		}
 		clientID := os.Getenv(envGitHubID)
 		clientSecret := os.Getenv(envGitHubSecret)
 		publicURL := os.Getenv(envPublicURL)
 		if clientID == "" || clientSecret == "" || publicURL == "" {
-			return nil, nil, nil, fmt.Errorf("%s=github requires %s, %s, and %s",
+			return nil, nil, nil, nil, fmt.Errorf("%s=github requires %s, %s, and %s",
 				envAuth, envGitHubID, envGitHubSecret, envPublicURL)
 		}
 		store, err := authdb.Open(dbPath)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("open auth db: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("open auth db: %w", err)
 		}
 		gh := &auth.GitHub{
 			Cfg: auth.GitHubConfig{
@@ -263,9 +276,9 @@ func selectAuth() (auth.Backend, *gitHubHandlers, func(), error) {
 			Store: store,
 		}
 		closer := func() { _ = store.Close() }
-		return gh, &gitHubHandlers{login: gh.ServeLogin, callback: gh.ServeCallback}, closer, nil
+		return gh, &gitHubHandlers{login: gh.ServeLogin, callback: gh.ServeCallback}, store, closer, nil
 	default:
-		return nil, nil, nil, fmt.Errorf("unknown %s=%q (expected none or github)", envAuth, mode)
+		return nil, nil, nil, nil, fmt.Errorf("unknown %s=%q (expected none or github)", envAuth, mode)
 	}
 }
 
@@ -344,7 +357,7 @@ func resolverFor(ctx context.Context, factory workspace.Factory) (workspace.Reso
 }
 
 
-func registerTools(s *server.MCPServer, factory workspace.Factory) {
+func registerTools(s *server.MCPServer, factory workspace.Factory, store *authdb.Store) {
 	// The bulk of the layout strategy lives in server instructions above so
 	// it isn't re-sent on every tool call. The description below carries
 	// only the rules the model needs at the moment it decides to call.
@@ -371,7 +384,7 @@ split it, simplify it, or switch to 'direction: down'.`),
 			mcp.Description("Path to the Typst source file (.typ) containing #d2[...] blocks. Absolute in local stdio mode; workspace-relative in scoped/hosted mode."),
 		),
 	)
-	s.AddTool(compileTypstTool, handleCompileTypst(factory))
+	s.AddTool(compileTypstTool, handleCompileTypst(factory, store))
 
 	putFileTool := mcp.NewTool("put_file",
 		mcp.WithDescription(`Write a file into the server's active workspace.
@@ -410,11 +423,29 @@ func registerResources(s *server.MCPServer, factory workspace.Factory) {
 	s.AddResourceTemplate(tmpl, handleReadPDF(factory))
 }
 
-func handleCompileTypst(factory workspace.Factory) server.ToolHandlerFunc {
+func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		filePath, err := request.RequireString("file_path")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		// Quota gate runs first so a quota-exceeded user pays no
+		// compute cost. Only authenticated identities are metered;
+		// stdio + AUTH=none stay unlimited.
+		id, _ := identity.FromContext(ctx)
+		if store != nil && !id.IsAnonymous() {
+			limit := quotaPerDay()
+			today := time.Now().UTC().Format("2006-01-02")
+			if err := store.IncrementCompile(ctx, id.UserID, today, limit); err != nil {
+				if errors.Is(err, authdb.ErrQuotaExceeded) {
+					return mcp.NewToolResultError(fmt.Sprintf(
+						"quota exceeded: %d compile(s) per UTC day per user (resets at 00:00 UTC; set %s to raise)",
+						limit, envQuotaPerDay,
+					)), nil
+				}
+				return mcp.NewToolResultErrorFromErr("quota check", err), nil
+			}
 		}
 
 		resolver, err := resolverFor(ctx, factory)
