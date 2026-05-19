@@ -19,9 +19,14 @@ docker run -d --name typst-d2-mcp \
 ```
 
 That gives you a hosted MCP server with a 1-compile-per-UTC-day quota per
-authenticated user. Users sign up by visiting `https://your.host/login`
-and configure their MCP client with the resulting `Authorization: Bearer
-<key>` header.
+authenticated user. Users add it to their MCP client (Claude.ai, Claude
+Desktop, etc.) by pasting `https://your.host/mcp`; the client discovers
+the OAuth Authorization Server, registers itself, walks the user
+through GitHub sign-in, and stores the resulting access token itself —
+nothing to copy and paste.
+
+The same access tokens work for headless/CI use: capture one by driving
+the OAuth flow once and reuse it as `Authorization: Bearer <token>`.
 
 ## Setting up the GitHub OAuth app
 
@@ -124,8 +129,20 @@ deployment, and the documentation here is so they aren't forgotten.
 # Health
 curl https://your.host/healthz
 
-# Visit /login in a browser to sign in with GitHub and grab a key.
-# Then, with the key:
+# OAuth discovery: every MCP client starts here.
+curl https://your.host/.well-known/oauth-protected-resource
+curl https://your.host/.well-known/oauth-authorization-server
+
+# Driving /mcp without a token returns 401 with a WWW-Authenticate
+# pointing at resource_metadata — the entire OAuth dance is bootstrapped
+# from that one header.
+curl -sSi https://your.host/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"curl","version":"0"},"capabilities":{}}}'
+
+# Once an MCP client (Claude.ai, Claude Desktop, …) has walked the user
+# through the OAuth flow, it sends Bearer on /mcp:
 curl -sS https://your.host/mcp \
   -H "Authorization: Bearer ttd2_..." \
   -H "Content-Type: application/json" \

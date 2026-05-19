@@ -2,13 +2,11 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -96,72 +94,80 @@ func (g *GitHub) IdentifyFromRequest(r *http.Request) (identity.Identity, error)
 // Name returns the backend's startup label.
 func (*GitHub) Name() string { return "github" }
 
-// ServeLogin handles GET /login. It mints a random state, stashes it
-// in a short-lived HttpOnly cookie, and redirects to GitHub's OAuth
-// authorize URL.
-func (g *GitHub) ServeLogin(w http.ResponseWriter, r *http.Request) {
-	state, err := randomState()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "ttd2_oauth_state",
-		Value:    state,
-		Path:     "/auth/",
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
-	q := url.Values{}
-	q.Set("client_id", g.Cfg.ClientID)
-	q.Set("redirect_uri", g.Cfg.redirectURL())
-	q.Set("scope", "read:user user:email")
-	q.Set("state", state)
-	http.Redirect(w, r, g.Cfg.authorizeURL()+"?"+q.Encode(), http.StatusFound)
-}
-
-// ServeCallback handles GET /auth/github/callback. It verifies the
-// state cookie, exchanges the auth code for a GitHub access token,
-// fetches the user, upserts them in authdb, mints an API key, and
-// shows the key to the user exactly once.
+// ServeCallback handles GET /auth/github/callback. The `state`
+// parameter is the authorize-session id created by ServeAuthorize in
+// oauth.go — we look it up to find the MCP client we're authorizing,
+// exchange the GitHub code for the user, mint a one-shot
+// authorization code bound to the original PKCE challenge, and
+// redirect the user's browser back to the MCP client's redirect_uri
+// with that code. The MCP client then calls /token to swap it for an
+// access token.
 func (g *GitHub) ServeCallback(w http.ResponseWriter, r *http.Request) {
-	state := r.URL.Query().Get("state")
+	sessionID := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
-	if state == "" || code == "" {
+	if sessionID == "" || code == "" {
 		http.Error(w, "missing state or code", http.StatusBadRequest)
 		return
 	}
-	cookie, err := r.Cookie("ttd2_oauth_state")
-	if err != nil || cookie.Value != state {
-		http.Error(w, "state mismatch", http.StatusBadRequest)
+	session, err := g.Store.ConsumeAuthorizeSession(r.Context(), sessionID)
+	if err != nil {
+		// Don't redirect: we have no trusted redirect_uri to bounce
+		// to (the session was the source of that trust).
+		slog.Warn("authorize session missing", "session_id", sessionID, "err", err)
+		http.Error(w, "authorize session not found or expired", http.StatusBadRequest)
 		return
 	}
-	// Consume the cookie either way.
-	http.SetCookie(w, &http.Cookie{Name: "ttd2_oauth_state", Path: "/auth/", MaxAge: -1})
 
 	ghToken, err := g.exchangeCode(r.Context(), code)
 	if err != nil {
-		http.Error(w, "code exchange failed: "+err.Error(), http.StatusBadGateway)
+		redirectOAuthError(w, r, session.RedirectURI, session.ClientState,
+			"server_error", "code exchange failed")
 		return
 	}
 	gu, err := g.fetchUser(r.Context(), ghToken)
 	if err != nil {
-		http.Error(w, "github user fetch failed: "+err.Error(), http.StatusBadGateway)
+		redirectOAuthError(w, r, session.RedirectURI, session.ClientState,
+			"server_error", "github user fetch failed")
 		return
 	}
-	userID, err := g.Store.UpsertGitHubUser(r.Context(), gu.ID, gu.Login, gu.Email)
+	userDBID, err := g.Store.UpsertGitHubUser(r.Context(), gu.ID, gu.Login, gu.Email)
 	if err != nil {
-		http.Error(w, "user upsert failed: "+err.Error(), http.StatusInternalServerError)
+		slog.Error("upsert user", "err", err)
+		redirectOAuthError(w, r, session.RedirectURI, session.ClientState,
+			"server_error", "user upsert failed")
 		return
 	}
-	key, err := g.Store.IssueAPIKey(r.Context(), userID)
+	authzCode, err := g.Store.MintAuthorizationCode(r.Context(), authdb.AuthorizationCode{
+		UserDBID:            userDBID,
+		ClientID:            session.ClientID,
+		RedirectURI:         session.RedirectURI,
+		CodeChallenge:       session.CodeChallenge,
+		CodeChallengeMethod: session.CodeChallengeMethod,
+		Scope:               session.Scope,
+	})
 	if err != nil {
-		http.Error(w, "key issue failed: "+err.Error(), http.StatusInternalServerError)
+		slog.Error("mint authorization code", "err", err)
+		redirectOAuthError(w, r, session.RedirectURI, session.ClientState,
+			"server_error", "could not mint authorization code")
 		return
 	}
-	writeKeyPage(w, gu.Login, key)
+	slog.Info("oauth authorize ok",
+		"client_id", session.ClientID,
+		"user", gu.Login,
+		"github_id", gu.ID,
+	)
+	u, err := url.Parse(session.RedirectURI)
+	if err != nil {
+		http.Error(w, "invalid redirect_uri in session", http.StatusInternalServerError)
+		return
+	}
+	q := u.Query()
+	q.Set("code", authzCode)
+	if session.ClientState != "" {
+		q.Set("state", session.ClientState)
+	}
+	u.RawQuery = q.Encode()
+	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
 func bearerToken(r *http.Request) string {
@@ -171,14 +177,6 @@ func bearerToken(r *http.Request) string {
 		return strings.TrimSpace(h[len(p):])
 	}
 	return ""
-}
-
-func randomState() (string, error) {
-	var b [24]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b[:]), nil
 }
 
 type githubUser struct {
@@ -251,15 +249,3 @@ func (g *GitHub) fetchUser(ctx context.Context, ghToken string) (githubUser, err
 	return u, nil
 }
 
-func writeKeyPage(w http.ResponseWriter, login, key string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = fmt.Fprintf(w, `<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><title>typst-d2-mcp API key</title></head>
-<body style="font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem;line-height:1.5">
-<h1>Hello, %s</h1>
-<p>Your typst-d2-mcp API key is shown below. <strong>Copy it now — it will not be displayed again.</strong></p>
-<pre style="background:#f4f4f4;padding:1rem;border-radius:6px;font-size:1rem;overflow-x:auto">%s</pre>
-<p>Configure your MCP client to send this key as <code>Authorization: Bearer &lt;key&gt;</code> on the MCP HTTP endpoint.</p>
-</body></html>`, html.EscapeString(login), html.EscapeString(key))
-}
