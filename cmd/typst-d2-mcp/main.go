@@ -52,8 +52,12 @@ const (
 
 	envMetricsAddr   = "TYPST_D2_MCP_METRICS_ADDR"
 	envMetricsBearer = "TYPST_D2_MCP_METRICS_BEARER"
+	envMaxEmbedBytes = "TYPST_D2_MCP_MAX_EMBED_BYTES"
 
-	defaultMetricsAddr = ":9090"
+	defaultMetricsAddr   = ":9090"
+	defaultMaxEmbedBytes = int64(512 << 10) // 512 KiB — below this the PDF
+	// is base64-embedded inline so MCP clients that don't follow
+	// resource_link (Claude.ai as of 2026-05) still get the bytes.
 
 	defaultAddr           = ":8080"
 	defaultPath           = "/mcp"
@@ -87,6 +91,16 @@ func maxInputBytes() int64 {
 // deployments stay unmetered.
 func quotaPerDay() int {
 	return int(int64Env(envQuotaPerDay, int64(defaultQuotaPerDay)))
+}
+
+// maxEmbedBytes is the size cutoff above which the compiled PDF is
+// returned as a resource_link only (clients fetch via resources/read)
+// instead of being base64-embedded in the tool result. Inlining
+// avoids the link-doesn't-resolve trap on clients that don't auto-
+// follow resource_link (today: Claude.ai), but burns tokens linearly
+// in PDF size — hence the cap. 0 disables embedding entirely.
+func maxEmbedBytes() int64 {
+	return int64Env(envMaxEmbedBytes, defaultMaxEmbedBytes)
 }
 
 func durationEnv(key string, def time.Duration) time.Duration {
@@ -669,9 +683,42 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		duration := time.Since(start)
 		metrics.CompileTotal.WithLabelValues(metrics.ResultOK).Inc()
 		metrics.CompileDuration.Observe(duration.Seconds())
+
+		// Decide between inline-embedded PDF and resource_link based
+		// on size. Clients that auto-follow resource_link (the spec'd
+		// behavior) work either way; clients that don't (Claude.ai
+		// today) need the bytes inline to display anything.
+		pdfURI := pdfURIPrefix + url.PathEscape(toolVisibleOut)
+		pdfInfo, _ := os.Stat(resolvedOut)
+		limit := maxEmbedBytes()
+		if limit > 0 && pdfInfo != nil && pdfInfo.Size() <= limit {
+			pdfBytes, err := os.ReadFile(resolvedOut)
+			if err == nil {
+				log.Info("compile ok",
+					"output", toolVisibleOut,
+					"duration_ms", duration.Milliseconds(),
+					"pdf_bytes", len(pdfBytes),
+					"embedded", true,
+				)
+				return mcp.NewToolResultResource(successMsg, mcp.BlobResourceContents{
+					URI:      pdfURI,
+					MIMEType: "application/pdf",
+					Blob:     base64.StdEncoding.EncodeToString(pdfBytes),
+				}), nil
+			}
+			// Fall through to link if read failed.
+			log.Warn("read pdf for inline embed failed; falling back to resource_link", "err", err)
+		}
+		if pdfInfo != nil && limit > 0 {
+			successMsg += fmt.Sprintf(
+				"\n\n(PDF is %d bytes — over the %d-byte inline limit. Use resources/read on the link below, or raise %s.)",
+				pdfInfo.Size(), limit, envMaxEmbedBytes,
+			)
+		}
 		log.Info("compile ok",
 			"output", toolVisibleOut,
 			"duration_ms", duration.Milliseconds(),
+			"embedded", false,
 		)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
