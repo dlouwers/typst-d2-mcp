@@ -32,6 +32,95 @@ func TestLocalFS_Resolve(t *testing.T) {
 	}
 }
 
+func TestScopedFS_Resolve(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewScopedFS(root)
+	if err != nil {
+		t.Fatalf("NewScopedFS: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string // substring; "" means success
+	}{
+		{"relative ok", "a/b.typ", ""},
+		{"redundant slashes", "a//b.typ", ""},
+		{"dot prefix ok", "./a/b.typ", ""},
+		{"interior dotdot ok", "a/b/../c.typ", ""},
+		{"empty rejected", "", "empty path"},
+		{"absolute rejected", "/etc/passwd", "absolute"},
+		{"traversal direct", "../escape.typ", "escapes workspace"},
+		{"traversal nested", "a/../../escape.typ", "escapes workspace"},
+		{"traversal trailing", "a/b/../../..", "escapes workspace"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.Resolve(tt.input)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("Resolve(%q) err=%v, want substring %q", tt.input, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Resolve(%q): unexpected err %v", tt.input, err)
+			}
+			if !strings.HasPrefix(got, s.Root+string(os.PathSeparator)) && got != s.Root {
+				t.Errorf("Resolve(%q) = %q, want path under %q", tt.input, got, s.Root)
+			}
+		})
+	}
+}
+
+func TestNewScopedFS_CreatesRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "ws")
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("precondition: %s should not exist yet", root)
+	}
+	s, err := NewScopedFS(root)
+	if err != nil {
+		t.Fatalf("NewScopedFS: %v", err)
+	}
+	info, err := os.Stat(s.Root)
+	if err != nil {
+		t.Fatalf("workspace root not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("workspace root is not a directory")
+	}
+}
+
+func TestWriteFile_LocalFS(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "nested", "doc.typ")
+	if _, err := WriteFile(LocalFS{}, target, []byte("hello")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("got %q want %q", got, "hello")
+	}
+}
+
+func TestWriteFile_ScopedFS_TraversalRejected(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewScopedFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteFile(s, "../escape.typ", []byte("nope")); err == nil {
+		t.Fatal("expected traversal error, got nil")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(root), "escape.typ")); err == nil {
+		t.Errorf("file was written outside workspace root")
+	}
+}
+
 func TestMustExist(t *testing.T) {
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "ok.typ")
