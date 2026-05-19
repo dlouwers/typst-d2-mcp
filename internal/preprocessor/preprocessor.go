@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/d2"
@@ -85,37 +86,64 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 	return content, nil
 }
 
-// extractD2Calls finds all #d2[...] or #d2(options)[...] blocks in the content.
+// extractD2Calls finds all D2 blocks in the content. Two forms are
+// recognised, with LLM-generated documents in the wild using both:
+//
+//   1. #d2[code]                  — bracket-delimited code, no options
+//      #d2(opts)[code]            — bracket-delimited code, with options
+//
+//   2. #d2(```code```)            — Typst raw-string syntax inside the
+//      #d2(```d2\ncode\n```)        function call. The optional language
+//                                   tag (e.g. "d2") is stripped.
+//
+// Form 1 is what the tool description documents. Form 2 is what LLMs
+// commonly produce when they default to Typst's raw-block syntax for
+// embedded code. Previously only form 1 was matched, and a form-2
+// block in the document silently caused the bracket-form regex to
+// gobble everything between the first `#d2(` and the document's last
+// `]`, deleting ~90% of the source before typst saw it.
+//
+// The bracket-form regex's option group is constrained to characters
+// other than `)` and `` ` `` so it can't span across form-2 blocks or
+// nested parentheses in raw-string code.
 func extractD2Calls(content string) []D2Block {
-	// Pattern: #d2(key: value, ...)[code] or #d2[code]
-	// (?s) makes . match newlines
-	pattern := regexp.MustCompile(`(?s)#d2(?:\((.*?)\))?\[(.*?)\]`)
-	matches := pattern.FindAllStringSubmatchIndex(content, -1)
+	// Form 1: bracket-delimited code.
+	bracketRe := regexp.MustCompile("(?s)#d2(?:\\(([^)`]*)\\))?\\[(.*?)\\]")
+	// Form 2: raw-string code inside parens. Optional language tag,
+	// optional leading/trailing newline around the code.
+	rawRe := regexp.MustCompile("(?s)#d2\\(`{3}(?:\\w+)?\\n?(.*?)\\n?`{3}\\)")
 
-	blocks := make([]D2Block, 0, len(matches))
+	blocks := make([]D2Block, 0)
 
-	for _, match := range matches {
-		// match[0], match[1] = full match start/end
-		// match[2], match[3] = options group start/end
-		// match[4], match[5] = code group start/end
-
+	for _, m := range bracketRe.FindAllStringSubmatchIndex(content, -1) {
+		// m[0],m[1] = full; m[2],m[3] = options; m[4],m[5] = code.
 		var optionsStr string
-		if match[2] != -1 && match[3] != -1 {
-			optionsStr = content[match[2]:match[3]]
+		if m[2] != -1 && m[3] != -1 {
+			optionsStr = content[m[2]:m[3]]
 		}
-
-		code := content[match[4]:match[5]]
-
-		// Parse options
-		options := parseOptions(optionsStr)
-
 		blocks = append(blocks, D2Block{
-			Start:   match[0],
-			End:     match[1],
-			Options: options,
-			Code:    code,
+			Start:   m[0],
+			End:     m[1],
+			Options: parseOptions(optionsStr),
+			Code:    content[m[4]:m[5]],
 		})
 	}
+	for _, m := range rawRe.FindAllStringSubmatchIndex(content, -1) {
+		// m[0],m[1] = full; m[2],m[3] = code (no options in this form).
+		blocks = append(blocks, D2Block{
+			Start:   m[0],
+			End:     m[1],
+			Options: d2.Options{},
+			Code:    content[m[2]:m[3]],
+		})
+	}
+
+	// Sort by start offset so the reverse-order replacement in
+	// PreprocessFile preserves positions correctly when both forms
+	// appear in the same document.
+	sort.Slice(blocks, func(i, j int) bool {
+		return blocks[i].Start < blocks[j].Start
+	})
 
 	return blocks
 }

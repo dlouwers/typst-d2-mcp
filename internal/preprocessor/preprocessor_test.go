@@ -235,6 +235,77 @@ Suffix text`
 	}
 }
 
+// Form 2: Typst raw-string-inside-parens. Common when LLMs default to
+// Typst's `#raw(...)` idiom for embedded code. Previously broke the
+// preprocessor entirely.
+func TestExtractD2Calls_RawStringForm(t *testing.T) {
+	content := "before\n#d2(```\ndirection: down\na -> b\n```)\nafter"
+	blocks := extractD2Calls(content)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	wantCode := "direction: down\na -> b"
+	if blocks[0].Code != wantCode {
+		t.Errorf("code = %q, want %q", blocks[0].Code, wantCode)
+	}
+}
+
+// Form 2 with a language tag (```d2 ...```) — the tag is dropped.
+func TestExtractD2Calls_RawStringWithLang(t *testing.T) {
+	content := "#d2(```d2\nx -> y\n```)"
+	blocks := extractD2Calls(content)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Code != "x -> y" {
+		t.Errorf("code = %q, want %q", blocks[0].Code, "x -> y")
+	}
+}
+
+// Regression for the wars_report.typ bug. Two raw-string d2 blocks
+// plus a `[...]` bracket-content block from typst markup elsewhere in
+// the document. Previously the bracket-form regex matched one
+// monstrous span from the first `#d2(` to the document's last `]`,
+// deleting ~90% of the source. Now each d2 block is matched
+// independently and the markup brackets are left alone.
+func TestExtractD2Calls_DoesNotGobbleAcrossBlocks(t *testing.T) {
+	content := `Some markup with #text(weight: "bold")[a label] here.
+
+#d2(` + "```" + `
+direction: down
+ukraine: "Russia–Ukraine War (year 5)"
+` + "```" + `)
+
+Middle paragraph with [some bracket content] inline.
+
+#d2(` + "```" + `
+direction: down
+iran: "Iran"
+israel: "Israel"
+` + "```" + `)
+
+Trailing markup #text[footnote here].`
+
+	blocks := extractD2Calls(content)
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 d2 blocks, got %d", len(blocks))
+	}
+	// They must be ordered by Start position.
+	if blocks[0].Start >= blocks[1].Start {
+		t.Errorf("blocks not sorted by position: %d vs %d", blocks[0].Start, blocks[1].Start)
+	}
+	// And neither match can span across the other.
+	if blocks[0].End >= blocks[1].Start {
+		t.Errorf("block 0 (end=%d) overlaps block 1 (start=%d)", blocks[0].End, blocks[1].Start)
+	}
+	if !strings.Contains(blocks[0].Code, "Russia") || strings.Contains(blocks[0].Code, "Iran") {
+		t.Errorf("block 0 code wrong: %q", blocks[0].Code)
+	}
+	if !strings.Contains(blocks[1].Code, "Iran") || strings.Contains(blocks[1].Code, "Russia") {
+		t.Errorf("block 1 code wrong: %q", blocks[1].Code)
+	}
+}
+
 func TestExtractD2CallsWithNestedBrackets(t *testing.T) {
 	// D2 code can contain nested braces
 	content := `#d2[
