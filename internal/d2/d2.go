@@ -3,6 +3,7 @@ package d2
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 )
@@ -11,8 +12,10 @@ import (
 type Options map[string]string
 
 // Render executes the D2 CLI to render D2 code to SVG.
-// Uses stdin->stdout streaming, no temporary files.
-func Render(code string, options Options) (string, error) {
+// Uses stdin->stdout streaming, no temporary files. The provided context
+// bounds the d2 invocation — pass a context.WithTimeout from the calling
+// tool handler to enforce per-compile budgets.
+func Render(ctx context.Context, code string, options Options) (string, error) {
 	cmd := []string{"d2"}
 
 	// Add options
@@ -44,7 +47,7 @@ func Render(code string, options Options) (string, error) {
 	cmd = append(cmd, "-", "-")
 
 	// Execute D2
-	d2Cmd := exec.Command(cmd[0], cmd[1:]...)
+	d2Cmd := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 	d2Cmd.Stdin = bytes.NewBufferString(code)
 
 	var stdout, stderr bytes.Buffer
@@ -52,6 +55,9 @@ func Render(code string, options Options) (string, error) {
 	d2Cmd.Stderr = &stderr
 
 	if err := d2Cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("d2 rendering: %w", ctx.Err())
+		}
 		if _, lookErr := exec.LookPath("d2"); lookErr != nil {
 			return "", fmt.Errorf("d2 command not found. Install from: https://d2lang.com/tour/install")
 		}

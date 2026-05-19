@@ -2,6 +2,7 @@
 package preprocessor
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -23,17 +24,20 @@ type D2Block struct {
 
 // PreprocessFile reads a Typst file from the local filesystem, processes all
 // D2 blocks, and returns the modified content. It is a back-compat wrapper
-// around Preprocess that uses workspace.LocalFS as the resolver, preserving
-// the original behavior used by the typst-d2-prep CLI.
+// around Preprocess that uses workspace.LocalFS as the resolver and a
+// background context, preserving the original behavior used by the
+// typst-d2-prep CLI.
 func PreprocessFile(inputPath string) (string, error) {
-	return Preprocess(workspace.LocalFS{}, inputPath)
+	return Preprocess(context.Background(), workspace.LocalFS{}, inputPath)
 }
 
 // Preprocess resolves inputPath through the supplied workspace.Resolver,
 // reads the resulting file, processes all D2 blocks, and returns the
 // modified Typst content. Callers in HTTP mode pass a tenant-scoped
-// resolver; the stdio path passes workspace.LocalFS.
-func Preprocess(r workspace.Resolver, inputPath string) (string, error) {
+// resolver; the stdio path passes workspace.LocalFS. The context bounds
+// each d2.Render invocation — pass a context.WithTimeout from the tool
+// handler to enforce a per-compile budget.
+func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (string, error) {
 	resolved, err := r.Resolve(inputPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
@@ -63,7 +67,7 @@ func Preprocess(r workspace.Resolver, inputPath string) (string, error) {
 		fmt.Fprintf(os.Stderr, "  [%d/%d] Rendering diagram...\n", len(d2Blocks)-i, len(d2Blocks))
 
 		// Render D2 to SVG
-		svg, err := d2.Render(block.Code, block.Options)
+		svg, err := d2.Render(ctx, block.Code, block.Options)
 		if err != nil {
 			return "", fmt.Errorf("failed to render diagram %d: %w", i+1, err)
 		}
