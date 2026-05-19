@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -52,8 +53,10 @@ const (
 
 	envMetricsAddr   = "TYPST_D2_MCP_METRICS_ADDR"
 	envMetricsBearer = "TYPST_D2_MCP_METRICS_BEARER"
+	envPDFLinkTTL    = "TYPST_D2_MCP_PDF_LINK_TTL"
 
 	defaultMetricsAddr = ":9090"
+	defaultPDFLinkTTL  = time.Hour
 
 	defaultAddr           = ":8080"
 	defaultPath           = "/mcp"
@@ -87,6 +90,14 @@ func maxInputBytes() int64 {
 // deployments stay unmetered.
 func quotaPerDay() int {
 	return int(int64Env(envQuotaPerDay, int64(defaultQuotaPerDay)))
+}
+
+// pdfLinkTTL is the lifetime of a capability URL minted by the compile
+// handler. The opaque token IS the credential; the URL itself is the
+// primary defence, so a tight TTL is the secondary defence in case the
+// URL leaks via chat history, server logs, etc.
+func pdfLinkTTL() time.Duration {
+	return durationEnv(envPDFLinkTTL, defaultPDFLinkTTL)
 }
 
 func durationEnv(key string, def time.Duration) time.Duration {
@@ -219,7 +230,7 @@ func main() {
 		"max_input_bytes", maxInputBytes(),
 	)
 
-	if err := serve(s, backend, ghHandlers); err != nil {
+	if err := serve(s, backend, ghHandlers, factory, store); err != nil {
 		slog.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
@@ -356,7 +367,7 @@ func isHTTPTransport() bool {
 	return t == "http" || t == "streamable-http"
 }
 
-func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers) error {
+func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers, factory workspace.Factory, store *authdb.Store) error {
 	switch transport := strings.ToLower(os.Getenv(envTransport)); transport {
 	case "", "stdio":
 		// Stdio is always anonymous; the backend is irrelevant.
@@ -393,6 +404,11 @@ func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers) error 
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		})
+		// /d/{token} — capability-URL download endpoint. NOT behind
+		// the Bearer middleware: the token IS the credential, by
+		// design. Handler short-circuits to 404 when store == nil
+		// (AUTH=none stdio/local deployments).
+		mux.Handle("/d/", handlePDFDownload(factory, store))
 		if gh != nil {
 			// MCP-spec OAuth Authorization Server endpoints. The
 			// callback URL stays at /auth/github/callback to match the
@@ -669,6 +685,34 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		duration := time.Since(start)
 		metrics.CompileTotal.WithLabelValues(metrics.ResultOK).Inc()
 		metrics.CompileDuration.Observe(duration.Seconds())
+
+		// Mint a capability URL for the PDF and append it to the
+		// result text. MCP clients that don't auto-follow
+		// resource_link blocks (Claude.ai web as of 2026-05) DO
+		// render plain https URLs as clickable links — the user
+		// opens the PDF in their browser, no bytes traverse the LLM
+		// context. Spec-conformant clients (Claude Code) still get
+		// the resource_link content block alongside.
+		//
+		// Requires a SQLite store (AUTH=github) and TYPST_D2_MCP_PUBLIC_URL.
+		// Anonymous / AUTH=none deployments skip the link silently;
+		// those operators have local filesystem access anyway.
+		if store != nil {
+			ttl := pdfLinkTTL()
+			token, mintErr := store.MintPDFLink(ctx, id.UserID, toolVisibleOut, ttl)
+			if mintErr == nil {
+				pub := strings.TrimRight(os.Getenv(envPublicURL), "/")
+				if pub != "" {
+					successMsg += fmt.Sprintf(
+						"\n\nDownload: %s/d/%s\n(expires in %s; share or open in a browser)",
+						pub, token, ttl,
+					)
+				}
+			} else {
+				log.Warn("mint pdf link failed", "err", mintErr)
+			}
+		}
+
 		log.Info("compile ok",
 			"output", toolVisibleOut,
 			"duration_ms", duration.Milliseconds(),
@@ -680,6 +724,61 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 			},
 		}, nil
 	}
+}
+
+// handlePDFDownload is the capability-URL endpoint mounted at /d/.
+// It reads the token, resolves it to (user, file_path) via the SQLite
+// store, recreates the workspace.Resolver for that user via the
+// factory, and streams the PDF bytes. There is intentionally no
+// Bearer/auth check: the random token IS the credential, by design
+// (RFC-7239 §1 capability URL pattern).
+func handlePDFDownload(factory workspace.Factory, store *authdb.Store) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimPrefix(r.URL.Path, "/d/")
+		if token == "" || strings.Contains(token, "/") {
+			metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultFail).Inc()
+			http.NotFound(w, r)
+			return
+		}
+		if store == nil {
+			metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultFail).Inc()
+			http.NotFound(w, r)
+			return
+		}
+		link, err := store.LookupPDFLink(r.Context(), token)
+		if err != nil {
+			metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultNotFound).Inc()
+			http.NotFound(w, r)
+			return
+		}
+		resolver, err := factory.Resolver(identity.Identity{UserID: link.UserID})
+		if err != nil {
+			metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultFail).Inc()
+			slog.Error("pdf download: resolver", "err", err, "user", link.UserID)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		resolved, err := workspace.MustExist(resolver, link.FilePath)
+		if err != nil {
+			metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultNotFound).Inc()
+			slog.Warn("pdf download: file missing", "user", link.UserID, "path", link.FilePath)
+			http.NotFound(w, r)
+			return
+		}
+		f, err := os.Open(resolved)
+		if err != nil {
+			metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultFail).Inc()
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf(`inline; filename=%q`, filepath.Base(link.FilePath)))
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultOK).Inc()
+		_, _ = io.Copy(w, f)
+	})
 }
 
 func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {

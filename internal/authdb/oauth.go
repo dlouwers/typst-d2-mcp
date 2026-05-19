@@ -47,6 +47,7 @@ var (
 	ErrSessionNotFound      = errors.New("authorize session not found or expired")
 	ErrAuthorizationCode    = errors.New("authorization code not found, expired, or already used")
 	ErrPKCEMismatch         = errors.New("pkce verifier does not match challenge")
+	ErrPDFLinkNotFound      = errors.New("pdf download link not found or expired")
 )
 
 // OAuthClient is the public-facing shape of a registered MCP client.
@@ -112,6 +113,13 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
   scope                 TEXT,
   used                  INTEGER NOT NULL DEFAULT 0,
   expires_at            TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pdf_links (
+  token       TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,         -- identity.Identity.UserID (e.g. "gh:42")
+  file_path   TEXT NOT NULL,         -- workspace-relative path to the PDF
+  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at  TIMESTAMP NOT NULL
 );
 `
 	if _, err := s.db.Exec(ddl); err != nil {
