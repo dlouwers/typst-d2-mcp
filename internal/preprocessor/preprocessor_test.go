@@ -117,22 +117,37 @@ func TestSvgToTypstImage(t *testing.T) {
 		want    string
 	}{
 		{
-			name:    "simple svg",
+			// Default: cap at 100% width so wide D2 diagrams scale to
+			// fit the page instead of overflowing and silently
+			// truncating downstream Typst content.
+			name:    "default width is 100%",
 			svg:     "<svg>test</svg>",
 			options: d2.Options{},
+			want:    `#image(decode64("PHN2Zz50ZXN0PC9zdmc+"), format: "svg", width: 100%)`,
+		},
+		{
+			name:    "explicit width override",
+			svg:     "<svg>test</svg>",
+			options: d2.Options{"width": "8cm"},
+			want:    `#image(decode64("PHN2Zz50ZXN0PC9zdmc+"), format: "svg", width: 8cm)`,
+		},
+		{
+			name:    "width: none disables the cap (intrinsic size)",
+			svg:     "<svg>test</svg>",
+			options: d2.Options{"width": "none"},
 			want:    `#image(decode64("PHN2Zz50ZXN0PC9zdmc+"), format: "svg")`,
 		},
 		{
 			name:    "svg with padding",
 			svg:     "<svg>test</svg>",
 			options: d2.Options{"pad": "10pt"},
-			want:    `#pad(10pt, #image(decode64("PHN2Zz50ZXN0PC9zdmc+"), format: "svg"))`,
+			want:    `#pad(10pt, #image(decode64("PHN2Zz50ZXN0PC9zdmc+"), format: "svg", width: 100%))`,
 		},
 		{
 			name:    "svg with none padding",
 			svg:     "<svg>test</svg>",
 			options: d2.Options{"pad": "none"},
-			want:    `#image(decode64("PHN2Zz50ZXN0PC9zdmc+"), format: "svg")`,
+			want:    `#image(decode64("PHN2Zz50ZXN0PC9zdmc+"), format: "svg", width: 100%)`,
 		},
 	}
 

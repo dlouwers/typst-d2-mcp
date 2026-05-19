@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -652,8 +653,18 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		// Output PDF sits next to the input .typ inside the workspace.
 		resolvedOut := strings.TrimSuffix(resolvedIn, ".typ") + ".pdf"
 
+		// Capture stdout + stderr separately. Typst exits 0 with
+		// warnings on stderr for things like "cannot place at top of
+		// page" or oversized images that overflow the column —
+		// silent on success would mean a half-rendered PDF gets
+		// reported as a clean compile. We surface warnings to the
+		// caller so the LLM/operator can act on them.
+		var stdoutBuf, stderrBuf bytes.Buffer
 		cmd := exec.CommandContext(ctx, "typst", "compile", tmpFile.Name(), resolvedOut)
-		output, err := cmd.CombinedOutput()
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+		err = cmd.Run()
+		stderrStr := strings.TrimSpace(stderrBuf.String())
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
 				metrics.CompileTotal.WithLabelValues(metrics.ResultTimeout).Inc()
@@ -663,7 +674,8 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 				)), nil
 			}
 			metrics.CompileTotal.WithLabelValues(metrics.ResultFail).Inc()
-			errMsg := fmt.Sprintf("Typst compilation failed: %s\nOutput: %s", err.Error(), string(output))
+			combined := strings.TrimSpace(stdoutBuf.String() + "\n" + stderrStr)
+			errMsg := fmt.Sprintf("Typst compilation failed: %s\nOutput: %s", err.Error(), combined)
 			return mcp.NewToolResultError(errMsg), nil
 		}
 
@@ -681,6 +693,14 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		successMsg += "   - Split large diagrams into multiple focused diagrams\n"
 		successMsg += "   - Reduce number of nodes or simplify structure\n"
 		successMsg += "\nIf you cannot view the PDF yourself, inform the user to check the layout."
+
+		// Typst exits 0 with warnings on stderr. Surface them or
+		// they get silently dropped — and a "successful" compile
+		// with overflow warnings can produce a truncated PDF.
+		if stderrStr != "" {
+			log.Warn("typst compile produced warnings", "stderr", stderrStr)
+			successMsg += "\n\nTypst warnings (compile succeeded but check the PDF):\n" + stderrStr
+		}
 
 		duration := time.Since(start)
 		metrics.CompileTotal.WithLabelValues(metrics.ResultOK).Inc()
