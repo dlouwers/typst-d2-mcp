@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 )
 
 func TestLocalFS_Resolve(t *testing.T) {
@@ -104,6 +106,47 @@ func TestWriteFile_LocalFS(t *testing.T) {
 	}
 	if string(got) != "hello" {
 		t.Errorf("got %q want %q", got, "hello")
+	}
+}
+
+func TestLocalFactory_IgnoresIdentity(t *testing.T) {
+	r1, err := LocalFactory{}.Resolver(identity.Anonymous())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := LocalFactory{}.Resolver(identity.Identity{UserID: "u_42"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r1.(LocalFS); !ok {
+		t.Errorf("anonymous resolver is not LocalFS: %T", r1)
+	}
+	if _, ok := r2.(LocalFS); !ok {
+		t.Errorf("user resolver is not LocalFS: %T", r2)
+	}
+}
+
+func TestTenantFactory_PerUserRoot(t *testing.T) {
+	root := t.TempDir()
+	f := TenantFactory{Root: root}
+
+	a, err := f.Resolver(identity.Identity{UserID: "user-a"})
+	if err != nil {
+		t.Fatalf("resolver A: %v", err)
+	}
+	b, err := f.Resolver(identity.Identity{UserID: "user-b"})
+	if err != nil {
+		t.Fatalf("resolver B: %v", err)
+	}
+	if a.(*ScopedFS).Root == b.(*ScopedFS).Root {
+		t.Errorf("two users got the same root: %s", a.(*ScopedFS).Root)
+	}
+	wantPrefix := filepath.Join(root, "user-a")
+	if a.(*ScopedFS).Root != wantPrefix {
+		t.Errorf("user-a root = %s, want %s", a.(*ScopedFS).Root, wantPrefix)
+	}
+	if _, err := f.Resolver(identity.Identity{}); err == nil {
+		t.Error("empty UserID should be rejected")
 	}
 }
 
