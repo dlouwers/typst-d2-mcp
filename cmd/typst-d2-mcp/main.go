@@ -258,11 +258,17 @@ func initLogger() {
 	slog.SetDefault(slog.New(handler))
 }
 
-// gitHubHandlers bundles the HTTP endpoints exposed by the GitHub auth
-// backend; nil when AUTH is not "github".
+// gitHubHandlers bundles the HTTP endpoints exposed by the GitHub
+// auth backend; nil when AUTH is not "github". The set covers both
+// the GitHub round-trip and the MCP-spec OAuth Authorization Server
+// (RFC 6749 + 7591 + 7636 + 8414 + 9728) handlers.
 type gitHubHandlers struct {
-	login    http.HandlerFunc
-	callback http.HandlerFunc
+	githubCallback          http.HandlerFunc
+	wellKnownResource       http.HandlerFunc
+	wellKnownAuthServer     http.HandlerFunc
+	register                http.HandlerFunc
+	authorize               http.HandlerFunc
+	token                   http.HandlerFunc
 }
 
 // selectFactory picks the workspace.Factory used to mint per-request
@@ -332,7 +338,14 @@ func selectAuth() (auth.Backend, *gitHubHandlers, *authdb.Store, func(), error) 
 			Store: store,
 		}
 		closer := func() { _ = store.Close() }
-		return gh, &gitHubHandlers{login: gh.ServeLogin, callback: gh.ServeCallback}, store, closer, nil
+		return gh, &gitHubHandlers{
+			githubCallback:      gh.ServeCallback,
+			wellKnownResource:   gh.ServeWellKnownProtectedResource,
+			wellKnownAuthServer: gh.ServeWellKnownAuthorizationServer,
+			register:            gh.ServeRegister,
+			authorize:           gh.ServeAuthorize,
+			token:               gh.ServeToken,
+		}, store, closer, nil
 	default:
 		return nil, nil, nil, nil, fmt.Errorf("unknown %s=%q (expected none or github)", envAuth, mode)
 	}
@@ -365,15 +378,33 @@ func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers) error 
 			server.WithStateLess(true),
 		)
 
+		// Resource-metadata pointer is only emitted when an OAuth AS
+		// is actually wired up (i.e. AUTH=github). For AUTH=none the
+		// middleware skips the auth check entirely so the 401 path is
+		// unreachable anyway.
+		var resourceMetadataURL string
+		if gh != nil {
+			resourceMetadataURL = strings.TrimRight(os.Getenv(envPublicURL), "/") + "/.well-known/oauth-protected-resource"
+		}
+
 		mux := http.NewServeMux()
-		mux.Handle(path, authMiddleware(backend, httpSrv))
+		mux.Handle(path, authMiddleware(backend, httpSrv, resourceMetadataURL))
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
 		})
 		if gh != nil {
-			mux.HandleFunc("/login", gh.login)
-			mux.HandleFunc("/auth/github/callback", gh.callback)
+			// MCP-spec OAuth Authorization Server endpoints. The
+			// callback URL stays at /auth/github/callback to match the
+			// GitHub OAuth app registration; everything else is the
+			// public AS surface that MCP clients (Claude.ai etc.)
+			// discover and drive.
+			mux.HandleFunc("/.well-known/oauth-protected-resource", gh.wellKnownResource)
+			mux.HandleFunc("/.well-known/oauth-authorization-server", gh.wellKnownAuthServer)
+			mux.HandleFunc("/register", gh.register)
+			mux.HandleFunc("/authorize", gh.authorize)
+			mux.HandleFunc("/token", gh.token)
+			mux.HandleFunc("/auth/github/callback", gh.githubCallback)
 		}
 
 		// /metrics binds to a separate listener so it never shares
@@ -413,9 +444,15 @@ func startMetricsListener() {
 
 // authMiddleware identifies the principal behind r via backend and
 // attaches the resulting Identity to the request context. Backends
-// that don't admit anonymous traffic (i.e. GitHub) cause a 401 when
-// IdentifyFromRequest returns an error.
-func authMiddleware(backend auth.Backend, h http.Handler) http.Handler {
+// that don't admit anonymous traffic (i.e. GitHub) cause a 401 with
+// a WWW-Authenticate that carries the resource_metadata URL — that
+// pointer is what MCP clients (Claude.ai etc.) follow to discover
+// the OAuth Authorization Server and start the dance themselves.
+func authMiddleware(backend auth.Backend, h http.Handler, resourceMetadataURL string) http.Handler {
+	wwwAuth := `Bearer realm="typst-d2-mcp"`
+	if resourceMetadataURL != "" {
+		wwwAuth += `, resource_metadata="` + resourceMetadataURL + `"`
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := backend.IdentifyFromRequest(r)
 		if err != nil {
@@ -425,7 +462,7 @@ func authMiddleware(backend auth.Backend, h http.Handler) http.Handler {
 				"remote", r.RemoteAddr,
 				"err", err.Error(),
 			)
-			w.Header().Set("WWW-Authenticate", `Bearer realm="typst-d2-mcp"`)
+			w.Header().Set("WWW-Authenticate", wwwAuth)
 			http.Error(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
 			return
 		}
