@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Environment-agnostic resources. Overlays under deploy/k8s/overlays/
+# reference this base, set their namespace, patch hostnames + image
+# tag, and include their own SealedSecrets.
+#
+# Do NOT add `namespace:` here — overlays own that decision so a
+# single base can produce both prod (typst-d2-mcp) and test
+# (typst-d2-mcp-test) deployments.
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - pvc.yaml
+  - service.yaml
+  - deployment.yaml
+  - middleware-redirect-https.yaml
+  - ingress.yaml
+  - servicemonitor.yaml
+  - networkpolicy.yaml

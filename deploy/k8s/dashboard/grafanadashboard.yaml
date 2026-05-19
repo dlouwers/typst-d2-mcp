@@ -1,0 +1,34 @@
+# GrafanaDashboard CR for the typst-d2-mcp overview. The cluster's
+# grafana-operator watches every namespace and matches dashboards
+# against the Grafana CR via instanceSelector.matchLabels —
+# `dashboards: "grafana"` is the convention used by the single
+# Grafana instance in this cluster (matches investor-buddy).
+#
+# Dashboard JSON lives in a kustomize-generated ConfigMap (see
+# kustomization.yaml). Kustomize updates configMapRef.name with a
+# hash suffix automatically so updates don't fight in-place edits in
+# the Grafana UI.
+#
+# resyncPeriod: 5m keeps iteration fast — change a panel, paste the
+# JSON into typst-d2-mcp-overview.json in this repo, push, see the
+# operator pick it up within 5min.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: typst-d2-mcp-overview
+  labels:
+    app.kubernetes.io/name: typst-d2-mcp
+spec:
+  # The Grafana CR lives in `monitoring`; this CR lives in
+  # `typst-d2-mcp-test`. grafana-operator defaults to
+  # same-namespace-only attachment — cross-namespace must be opted
+  # in here AND the Grafana CR must allow the matching namespace via
+  # its resourceSelector (already permissive in this cluster).
+  allowCrossNamespaceImport: true
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  resyncPeriod: 5m
+  configMapRef:
+    name: typst-d2-mcp-dashboard
+    key: typst-d2-mcp-overview.json

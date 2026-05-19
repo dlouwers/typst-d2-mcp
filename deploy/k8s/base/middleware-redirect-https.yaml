@@ -1,0 +1,17 @@
+# Traefik Middleware: any request hitting the `web` (HTTP) entrypoint
+# gets a permanent 301 to HTTPS. Applied via annotation on the
+# redirect Ingress below.
+#
+# cert-manager's HTTP-01 challenge is unaffected: cert-manager creates
+# its own ephemeral solver Ingress for /.well-known/acme-challenge/*
+# during issuance, which has more specific path matching priority and
+# does NOT carry this middleware annotation.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: typst-d2-mcp
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

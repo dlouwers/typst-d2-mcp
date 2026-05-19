@@ -1,0 +1,11 @@
+# Same pattern as prod's pvc-patch: switch to Longhorn. On a fresh
+# test deploy you can leave volumeName unset and let Longhorn
+# provision; only pin it after a migration into a specific PV.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: typst-d2-mcp-data
+  namespace: typst-d2-mcp
+spec:
+  storageClassName: longhorn
+  # volumeName: pvc-REPLACE-ME-with-the-real-longhorn-pv-uuid

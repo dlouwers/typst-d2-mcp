@@ -1,0 +1,37 @@
+# Defence in depth on top of the bearer gate on /metrics: even if the
+# token leaked into another namespace, no pod outside `monitoring` can
+# open a TCP connection to :9090.
+#
+# Once a NetworkPolicy with policyTypes:[Ingress] selects a pod, ALL
+# inbound traffic is denied except what the policy lists. The :8080
+# rule with empty `from` is therefore mandatory — it preserves the
+# public Ingress path that previously had no NetworkPolicy guarding it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: typst-d2-mcp-metrics
+  labels:
+    app.kubernetes.io/name: typst-d2-mcp
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: typst-d2-mcp
+  policyTypes:
+    - Ingress
+  ingress:
+    # Cluster Prometheus scrape path. `kubernetes.io/metadata.name` is
+    # automatically applied by k8s ≥ 1.21 to every namespace — no
+    # extra labelling on `monitoring` required for this match.
+    - ports:
+        - port: 9090
+          protocol: TCP
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    # Public app path via Ingress. No `from` selector → allow from
+    # any source. Locking this down to Traefik pods is a separate
+    # concern (Ingress hardening), not in scope here.
+    - ports:
+        - port: 8080
+          protocol: TCP

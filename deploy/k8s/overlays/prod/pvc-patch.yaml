@@ -1,0 +1,21 @@
+# Strategic-merge patch for the prod overlay.
+#
+# Switches typst-d2-mcp-data off `local-path` (k3s default hostpath
+# provisioner, single-node-bound) to Longhorn for block-level
+# replication, snapshots/backups, and volume expansion. Same pattern
+# investor-buddy uses (#158).
+#
+# `volumeName` should be pinned to the specific PV that holds the
+# data after a migration. On a fresh deploy you can omit volumeName
+# and let Longhorn provision a new PV — then later, if you ever need
+# to migrate data into a pre-existing PV (e.g. restored from backup),
+# rebind by pinning the name. Replace the placeholder UUID below when
+# that becomes relevant.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: typst-d2-mcp-data
+  namespace: typst-d2-mcp
+spec:
+  storageClassName: longhorn
+  # volumeName: pvc-REPLACE-ME-with-the-real-longhorn-pv-uuid

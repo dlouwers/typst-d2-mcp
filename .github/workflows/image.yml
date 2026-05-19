@@ -1,0 +1,94 @@
+name: Image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    # Loop guard: Flux's image-automation-controller commits to the
+    # overlay kustomization.yaml files on every successful build/tag
+    # to bump newTag. Those commits don't change source code, but
+    # without this filter they would re-trigger this workflow → new
+    # image → new bot commit → infinite loop. Mirrors investor-buddy's
+    # release.yml — same Flux setup lives in the experiments repo.
+    paths-ignore:
+      - 'deploy/k8s/overlays/test/kustomization.yaml'
+      - 'deploy/k8s/overlays/prod/kustomization.yaml'
+  # Manual trigger — `gh workflow run Image`. Useful when the push
+  # trigger is missed or to re-publish without a new commit.
+  workflow_dispatch: {}
+
+# Avoid two concurrent builds on the same ref racing for the same
+# image tag — the second would push and overwrite mid-flight.
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute timestamp-prefixed sha tag for Flux ImagePolicy
+        # Flux's ImagePolicy can sort `numerical` on a regex-extracted
+        # part of the tag, but cannot read the manifest's `created`
+        # timestamp. Embedding a timestamp prefix in the tag is the
+        # canonical workaround. The ImagePolicy in the experiments
+        # repo matches `^(?P<ts>\d{14})-sha-[a-f0-9]+$` and sorts
+        # highest-first.
+        id: ts_tag
+        run: |
+          echo "value=$(date -u +%Y%m%d%H%M%S)-sha-$(git rev-parse --short=7 ${{ github.sha }})" >> "$GITHUB_OUTPUT"
+
+      - name: Compute build-info build-args
+        # Short SHA + RFC 3339 build time get baked into the binary
+        # via ldflags so operators can correlate a running container
+        # to a specific commit.
+        id: build_info
+        run: |
+          echo "git_sha=$(git rev-parse --short=7 ${{ github.sha }})" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=raw,value=${{ steps.ts_tag.outputs.value }},enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern=v{{version}}
+            type=semver,pattern=v{{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            GIT_SHA=${{ steps.build_info.outputs.git_sha }}
+            BUILD_TIME=${{ steps.build_info.outputs.build_time }}
