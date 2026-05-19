@@ -1,0 +1,29 @@
+# ServiceMonitor. Cluster Prometheus runs with
+# `serviceMonitorNamespaceSelector: {}` and
+# `serviceMonitorSelectorNilUsesHelmValues: false`, so any
+# ServiceMonitor in any namespace gets picked up automatically — no
+# extra labels needed to match the Prometheus instance.
+#
+# Scrapes the Service's `metrics` named port (see service.yaml).
+# bearerTokenSecret references the TYPST_D2_MCP_METRICS_BEARER key
+# from the per-env Secret. Prometheus reads it at scrape time so a
+# rotation (re-seal + restart) takes effect on the next scrape
+# without needing a Prometheus restart.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: typst-d2-mcp
+  labels:
+    app.kubernetes.io/name: typst-d2-mcp
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: typst-d2-mcp
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      bearerTokenSecret:
+        name: typst-d2-mcp-secrets
+        key: TYPST_D2_MCP_METRICS_BEARER

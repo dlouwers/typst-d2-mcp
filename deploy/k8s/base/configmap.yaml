@@ -1,0 +1,24 @@
+# Non-secret runtime configuration. Anything safe to commit lives here;
+# credentials and tokens go in sealed-secret.yaml in each overlay.
+#
+# The two GitHub OAuth fields and the metrics bearer live in the Secret
+# because they're per-deployment credentials.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: typst-d2-mcp-config
+  namespace: typst-d2-mcp
+data:
+  TYPST_D2_MCP_TRANSPORT: "http"
+  TYPST_D2_MCP_ADDR: ":8080"
+  TYPST_D2_MCP_PATH: "/mcp"
+  TYPST_D2_MCP_METRICS_ADDR: ":9090"
+  TYPST_D2_MCP_WORKSPACE: "/var/lib/typst-d2-mcp/workspaces"
+  TYPST_D2_MCP_DB: "/var/lib/typst-d2-mcp/auth.sqlite"
+  TYPST_D2_MCP_AUTH: "github"
+  TYPST_D2_MCP_PUBLIC_URL: "https://typst-d2-mcp.stormlantern.nl"
+  TYPST_D2_MCP_QUOTA_PER_DAY: "1"
+  TYPST_D2_MCP_COMPILE_TIMEOUT: "30s"
+  TYPST_D2_MCP_MAX_INPUT_BYTES: "1048576"
+  TYPST_D2_MCP_LOG_FORMAT: "json"
+  TYPST_D2_MCP_LOG_LEVEL: "info"

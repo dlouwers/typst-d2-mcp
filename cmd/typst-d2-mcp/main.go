@@ -18,6 +18,7 @@ import (
 	"github.com/dlouwers/typst-d2-mcp/internal/auth"
 	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
+	"github.com/dlouwers/typst-d2-mcp/internal/metrics"
 	"github.com/dlouwers/typst-d2-mcp/internal/preprocessor"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -25,9 +26,13 @@ import (
 	"github.com/yosida95/uritemplate/v3"
 )
 
+// serverVersion is overridden at release time via
+// `-ldflags="-X main.serverVersion=..."`. Must be var (not const) for
+// the linker to rewrite it.
+var serverVersion = "dev"
+
 const (
-	serverName    = "typst-d2-mcp"
-	serverVersion = "1.0.0"
+	serverName = "typst-d2-mcp"
 
 	envTransport      = "TYPST_D2_MCP_TRANSPORT"
 	envAddr           = "TYPST_D2_MCP_ADDR"
@@ -44,6 +49,11 @@ const (
 	envQuotaPerDay  = "TYPST_D2_MCP_QUOTA_PER_DAY"
 	envLogLevel     = "TYPST_D2_MCP_LOG_LEVEL"
 	envLogFormat    = "TYPST_D2_MCP_LOG_FORMAT"
+
+	envMetricsAddr   = "TYPST_D2_MCP_METRICS_ADDR"
+	envMetricsBearer = "TYPST_D2_MCP_METRICS_BEARER"
+
+	defaultMetricsAddr = ":9090"
 
 	defaultAddr           = ":8080"
 	defaultPath           = "/mcp"
@@ -366,11 +376,39 @@ func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers) error 
 			mux.HandleFunc("/auth/github/callback", gh.callback)
 		}
 
+		// /metrics binds to a separate listener so it never shares
+		// the public Ingress with the app port. NetworkPolicy in
+		// the k8s manifests restricts the metrics port further to
+		// the monitoring namespace only.
+		startMetricsListener()
+
 		slog.Info("listening", "addr", addr, "path", path)
 		return http.ListenAndServe(addr, mux) //nolint:gosec // intentional plain HTTP; TLS is terminated upstream.
 	default:
 		return fmt.Errorf("unknown %s=%q (expected stdio or http)", envTransport, transport)
 	}
+}
+
+// startMetricsListener serves Prometheus metrics on a separate port
+// in a background goroutine. The Bearer gate is optional: in
+// single-tenant local deployments the listener isn't reachable from
+// outside the host, so an unset TYPST_D2_MCP_METRICS_BEARER leaves
+// /metrics open. In Kubernetes the NetworkPolicy restricts the port
+// to the monitoring namespace as defence in depth.
+func startMetricsListener() {
+	addr := os.Getenv(envMetricsAddr)
+	if addr == "" {
+		addr = defaultMetricsAddr
+	}
+	token := os.Getenv(envMetricsBearer)
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.Handler(token))
+	slog.Info("metrics listening", "addr", addr, "bearer_required", token != "")
+	go func() {
+		if err := http.ListenAndServe(addr, mux); err != nil { //nolint:gosec // local cluster network only.
+			slog.Error("metrics server stopped", "err", err)
+		}
+	}()
 }
 
 // authMiddleware identifies the principal behind r via backend and
@@ -381,6 +419,7 @@ func authMiddleware(backend auth.Backend, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := backend.IdentifyFromRequest(r)
 		if err != nil {
+			metrics.AuthRejectedTotal.Inc()
 			slog.Warn("auth rejected",
 				"backend", backend.Name(),
 				"remote", r.RemoteAddr,
@@ -492,12 +531,14 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 			today := time.Now().UTC().Format("2006-01-02")
 			if err := store.IncrementCompile(ctx, id.UserID, today, limit); err != nil {
 				if errors.Is(err, authdb.ErrQuotaExceeded) {
+					metrics.CompileTotal.WithLabelValues(metrics.ResultQuotaExceeded).Inc()
 					log.Warn("quota exceeded", "limit", limit)
 					return mcp.NewToolResultError(fmt.Sprintf(
 						"quota exceeded: %d compile(s) per UTC day per user (resets at 00:00 UTC; set %s to raise)",
 						limit, envQuotaPerDay,
 					)), nil
 				}
+				metrics.CompileTotal.WithLabelValues(metrics.ResultFail).Inc()
 				log.Error("quota check failed", "err", err)
 				return mcp.NewToolResultErrorFromErr("quota check", err), nil
 			}
@@ -515,10 +556,13 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 
 		if info, err := os.Stat(resolvedIn); err == nil {
 			if limit := maxInputBytes(); info.Size() > limit {
+				metrics.CompileTotal.WithLabelValues(metrics.ResultTooLarge).Inc()
 				return mcp.NewToolResultError(fmt.Sprintf(
 					"input file too large: %d bytes (limit %d, set %s to raise)",
 					info.Size(), limit, envMaxInputBytes,
 				)), nil
+			} else {
+				metrics.CompileInputBytes.Observe(float64(info.Size()))
 			}
 		}
 
@@ -531,11 +575,13 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		processed, err := preprocessor.Preprocess(ctx, resolver, filePath)
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
+				metrics.CompileTotal.WithLabelValues(metrics.ResultTimeout).Inc()
 				return mcp.NewToolResultError(fmt.Sprintf(
 					"compile exceeded %s (set %s to raise)",
 					compileTimeout(), envCompileTimeout,
 				)), nil
 			}
+			metrics.CompileTotal.WithLabelValues(metrics.ResultFail).Inc()
 			return mcp.NewToolResultErrorFromErr("Preprocessing failed", err), nil
 		}
 
@@ -557,11 +603,13 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			if ctx.Err() == context.DeadlineExceeded {
+				metrics.CompileTotal.WithLabelValues(metrics.ResultTimeout).Inc()
 				return mcp.NewToolResultError(fmt.Sprintf(
 					"compile exceeded %s (set %s to raise)",
 					compileTimeout(), envCompileTimeout,
 				)), nil
 			}
+			metrics.CompileTotal.WithLabelValues(metrics.ResultFail).Inc()
 			errMsg := fmt.Sprintf("Typst compilation failed: %s\nOutput: %s", err.Error(), string(output))
 			return mcp.NewToolResultError(errMsg), nil
 		}
@@ -581,9 +629,12 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		successMsg += "   - Reduce number of nodes or simplify structure\n"
 		successMsg += "\nIf you cannot view the PDF yourself, inform the user to check the layout."
 
+		duration := time.Since(start)
+		metrics.CompileTotal.WithLabelValues(metrics.ResultOK).Inc()
+		metrics.CompileDuration.Observe(duration.Seconds())
 		log.Info("compile ok",
 			"output", toolVisibleOut,
-			"duration_ms", time.Since(start).Milliseconds(),
+			"duration_ms", duration.Milliseconds(),
 		)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -617,14 +668,17 @@ func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 		case "base64":
 			d, decErr := base64.StdEncoding.DecodeString(content)
 			if decErr != nil {
+				metrics.PutFileTotal.WithLabelValues(metrics.ResultDecodeError).Inc()
 				return mcp.NewToolResultErrorFromErr("base64 decode", decErr), nil
 			}
 			data = d
 		default:
+			metrics.PutFileTotal.WithLabelValues(metrics.ResultDecodeError).Inc()
 			return mcp.NewToolResultError(fmt.Sprintf("unknown encoding %q (expected utf8 or base64)", encoding)), nil
 		}
 
 		if limit := maxInputBytes(); int64(len(data)) > limit {
+			metrics.PutFileTotal.WithLabelValues(metrics.ResultTooLarge).Inc()
 			return mcp.NewToolResultError(fmt.Sprintf(
 				"content too large: %d bytes (limit %d, set %s to raise)",
 				len(data), limit, envMaxInputBytes,
@@ -632,8 +686,10 @@ func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 		}
 
 		if _, err := workspace.WriteFile(resolver, path, data); err != nil {
+			metrics.PutFileTotal.WithLabelValues(metrics.ResultFail).Inc()
 			return mcp.NewToolResultErrorFromErr("write file", err), nil
 		}
+		metrics.PutFileTotal.WithLabelValues(metrics.ResultOK).Inc()
 		return mcp.NewToolResultText(fmt.Sprintf("wrote %d bytes to %s", len(data), path)), nil
 	}
 }

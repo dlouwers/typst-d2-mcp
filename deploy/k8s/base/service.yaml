@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: typst-d2-mcp
+  namespace: typst-d2-mcp
+  labels:
+    app.kubernetes.io/name: typst-d2-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: typst-d2-mcp
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+    # Prometheus metrics port. Not routed via the Ingress, so it's
+    # only reachable from inside the cluster — kube-prometheus-stack
+    # scrapes via the ServiceMonitor. Bearer-gated even so (defence
+    # in depth on top of the NetworkPolicy below).
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP

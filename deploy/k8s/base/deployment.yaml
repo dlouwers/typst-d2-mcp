@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: typst-d2-mcp
+  namespace: typst-d2-mcp
+  labels:
+    app.kubernetes.io/name: typst-d2-mcp
+spec:
+  # Single replica: SQLite is single-writer, and the per-user workspace
+  # is rooted on a ReadWriteOnce volume. maxSurge=0 stops a second pod
+  # from briefly racing for the PVC during a rolling update.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: typst-d2-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: typst-d2-mcp
+    spec:
+      # GHCR package starts public; if you flip it private, seal a
+      # docker-registry secret and reference it here. See
+      # deploy/k8s/README.md → "GHCR pull secret (if private)".
+      imagePullSecrets:
+        - name: ghcr-pull
+      # Match the binary's "nonroot" uid (65532) so the image runs as
+      # a non-privileged user even before any container runtime
+      # security profile kicks in. fsGroup ensures the mounted PVC is
+      # writable by that uid on a fresh provision.
+      securityContext:
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: typst-d2-mcp
+          # Tag is rewritten at apply time by the overlay's `images:`
+          # block — this literal is just a placeholder to keep the
+          # manifest schema-valid. Real tag lives in
+          # deploy/k8s/overlays/{prod,test}/kustomization.yaml.
+          image: ghcr.io/dlouwers/typst-d2-mcp:placeholder
+          # IfNotPresent is correct because every release uses an
+          # immutable tag (e.g. :v0.1.0 or :TIMESTAMP-sha-XXX). Each
+          # new tag is pulled exactly once and cached forever.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: typst-d2-mcp-config
+            - secretRef:
+                name: typst-d2-mcp-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/typst-d2-mcp
+          # /healthz is a static 200 — fine for both probes.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            failureThreshold: 3
+            initialDelaySeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            # Typst + d2 are CPU-bursty during a compile. The limit is
+            # generous so a single compile doesn't get throttled; pair
+            # with TYPST_D2_MCP_COMPILE_TIMEOUT for a wall-clock cap.
+            limits:
+              cpu: "1500m"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: typst-d2-mcp-data

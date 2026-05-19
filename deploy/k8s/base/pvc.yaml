@@ -1,0 +1,17 @@
+# State volume: per-user workspaces and the SQLite auth/quota DB.
+#
+# Base ships local-path (k3s default, hostpath on the node) so a fresh
+# `kubectl apply -k base/` works on any cluster. The prod overlay
+# patches this to Longhorn with a pinned volumeName for replication +
+# backup; the test overlay does the same against its own PV.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: typst-d2-mcp-data
+  namespace: typst-d2-mcp
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi

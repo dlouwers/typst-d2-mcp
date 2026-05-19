@@ -1,0 +1,14 @@
+# Test overlay: point TYPST_D2_MCP_PUBLIC_URL at the test hostname so
+# the GitHub OAuth callback URL matches. The corresponding test
+# OAuth app must be registered with the same callback URL.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: typst-d2-mcp-config
+  namespace: typst-d2-mcp
+data:
+  TYPST_D2_MCP_PUBLIC_URL: "https://test.typst-d2-mcp.stormlantern.nl"
+  # Generous quota in test — lets you exercise the metered path
+  # repeatedly without waiting for UTC midnight.
+  TYPST_D2_MCP_QUOTA_PER_DAY: "20"
+  TYPST_D2_MCP_LOG_LEVEL: "debug"

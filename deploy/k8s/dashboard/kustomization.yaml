@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Single-instance dashboard slice. Pulled in by the test overlay only
+# (a single GrafanaDashboard CR renders both prod and test side-by-side
+# via the namespace template variable, so two CRs would just collide
+# on dashboard uid).
+
+resources:
+  - grafanadashboard.yaml
+
+# configMapGenerator computes a hash suffix on the generated CM's name
+# so a dashboard JSON change propagates as a NEW ConfigMap, the
+# GrafanaDashboard's configMapRef.name is updated to match, and the
+# operator notices and reapplies. No in-place edits to the same
+# ConfigMap means no race with Grafana's UI changes.
+configMapGenerator:
+  - name: typst-d2-mcp-dashboard
+    files:
+      - dashboards/typst-d2-mcp-overview.json

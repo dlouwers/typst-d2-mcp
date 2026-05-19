@@ -1,0 +1,58 @@
+# Two Ingresses, one per Traefik entrypoint. See the matching note in
+# investor-buddy's ingress.yaml for the long version: per-router
+# annotations on a single Ingress propagate to BOTH routers, which
+# made the web (HTTP) router incorrectly carry `tls: true`. Splitting
+# them lets each router carry only the annotations it actually wants.
+#
+#   - `typst-d2-mcp`           — websecure-only, TLS via cert-manager
+#   - `typst-d2-mcp-redirect`  — web-only, applies the redirect-https
+#                                Middleware to bump everything to HTTPS
+#
+# Hostname here is the prod hostname; the test overlay patches it.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: typst-d2-mcp
+  namespace: typst-d2-mcp
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [typst-d2-mcp.stormlantern.nl]
+      secretName: typst-d2-mcp-tls
+  rules:
+    - host: typst-d2-mcp.stormlantern.nl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: typst-d2-mcp
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: typst-d2-mcp-redirect
+  namespace: typst-d2-mcp
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: typst-d2-mcp-redirect-https@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: typst-d2-mcp.stormlantern.nl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: typst-d2-mcp
+                port:
+                  name: http

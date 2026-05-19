@@ -75,12 +75,13 @@ WORKDIR /home/nonroot
 ENV TYPST_D2_MCP_TRANSPORT=http \
     TYPST_D2_MCP_ADDR=:8080 \
     TYPST_D2_MCP_PATH=/mcp \
+    TYPST_D2_MCP_METRICS_ADDR=:9090 \
     TYPST_D2_MCP_WORKSPACE=/var/lib/typst-d2-mcp/workspaces \
     TYPST_D2_MCP_DB=/var/lib/typst-d2-mcp/auth.sqlite \
     TYPST_D2_MCP_LOG_FORMAT=json \
     TYPST_D2_MCP_LOG_LEVEL=info
 
-EXPOSE 8080
+EXPOSE 8080 9090
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1

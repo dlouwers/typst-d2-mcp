@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Test overlay. Apply with:
+#   kubectl apply -k deploy/k8s/overlays/test/
+#
+# Tracks main-branch HEAD via a moving timestamp+sha tag that Flux's
+# image-automation-controller rewrites on every successful build.
+# Tag scheme is `<YYYYMMDDHHmmss>-sha-<short>` so Flux's ImagePolicy
+# picks the newest by numerical sort on the timestamp. Image is
+# pulled exactly once per tag (immutable).
+#
+# Hostname: test.typst-d2-mcp.stormlantern.nl
+# DNS A record + GitHub OAuth callback URL are user-provisioned (see
+# README → "Test environment").
+namespace: typst-d2-mcp-test
+resources:
+  - ../../base
+  # Single-instance Grafana dashboard slice — included by test only
+  # so the GrafanaDashboard CR ships exactly once (avoids a uid
+  # collision with prod). The dashboard renders both namespaces side
+  # by side via the namespace template variable, so one CR is correct.
+  - ../../dashboard
+  - sealed-secret.yaml
+  # - sealed-ghcr-pull.yaml
+patches:
+  - path: ingress-patch.yaml
+  - path: configmap-patch.yaml
+  # Same Longhorn migration as prod, against the test env's PV.
+  - path: pvc-patch.yaml
+# Bot-rewritten on every successful main build by Flux's
+# image-automation-controller (apps/typst-d2-mcp-test.yaml in the
+# experiments repo). The marker comment on the `newTag:` line below
+# is the controller's anchor — DO NOT remove or move it.
+#
+# Once Flux bumps this for the first time, the value will look like
+# `20260519110000-sha-abc1234`. The literal placeholder ensures the
+# manifest stays schema-valid before that happens.
+images:
+  - name: ghcr.io/dlouwers/typst-d2-mcp
+    newTag: 00000000000000-sha-0000000 # {"$imagepolicy": "flux-system:typst-d2-mcp-test:tag"}

@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Production overlay. Apply with:
+#   kubectl apply -k deploy/k8s/overlays/prod/
+#
+# All env-agnostic resources live under ../../base. This overlay only
+# carries what's specific to prod: namespace pin, SealedSecrets sealed
+# against this namespace, the immutable image tag, and the
+# Longhorn-backed PVC.
+namespace: typst-d2-mcp
+resources:
+  - ../../base
+  # Both sealed-*.yaml files are generated locally via `kubeseal`
+  # against the cluster's controller key (see deploy/k8s/README.md).
+  # They're committed only after sealing — never include the raw
+  # Secret in this repo.
+  - sealed-secret.yaml
+  # Uncomment when the GHCR package is private and the cluster needs
+  # a docker-registry pull secret. See README → "GHCR pull secret".
+  # - sealed-ghcr-pull.yaml
+patches:
+  # Migrate typst-d2-mcp-data from local-path to Longhorn for prod.
+  # volumeName-pinned to a specific Longhorn PV — see the patch file
+  # for the operational story.
+  - path: pvc-patch.yaml
+# Pinned to an immutable version tag — the deploy is reproducible and
+# `kubectl apply -k` always picks up exactly the image referenced
+# here, regardless of imagePullPolicy. Bumping = edit `newTag`,
+# commit, apply.
+#
+# Release flow:
+#   1. git tag v0.X.Y && git push --tags     # Image workflow builds :v0.X.Y on this tag
+#   2. wait for the Image workflow to publish to GHCR
+#   3. update `newTag` here to v0.X.Y, commit on a release PR
+#   4. merge → kubectl apply -k deploy/k8s/overlays/prod/  → kubelet pulls :v0.X.Y
+#
+# For ad-hoc, between-release deploys: override locally without committing —
+#   kustomize edit set image ghcr.io/dlouwers/typst-d2-mcp=ghcr.io/dlouwers/typst-d2-mcp:sha-abc1234
+images:
+  - name: ghcr.io/dlouwers/typst-d2-mcp
+    newTag: v0.1.0 # {"$imagepolicy": "flux-system:typst-d2-mcp-prod:tag"}

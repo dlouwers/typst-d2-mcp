@@ -1,0 +1,41 @@
+# Test overlay: swap the hostname on both Ingresses to the
+# test-environment FQDN. cert-manager will issue a separate
+# certificate for this host on first reconcile.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: typst-d2-mcp
+  namespace: typst-d2-mcp
+spec:
+  tls:
+    - hosts: [test.typst-d2-mcp.stormlantern.nl]
+      secretName: typst-d2-mcp-tls
+  rules:
+    - host: test.typst-d2-mcp.stormlantern.nl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: typst-d2-mcp
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: typst-d2-mcp-redirect
+  namespace: typst-d2-mcp
+spec:
+  rules:
+    - host: test.typst-d2-mcp.stormlantern.nl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: typst-d2-mcp
+                port:
+                  name: http
