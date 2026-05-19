@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,6 +42,8 @@ const (
 	envGitHubID     = "TYPST_D2_MCP_GITHUB_CLIENT_ID"
 	envGitHubSecret = "TYPST_D2_MCP_GITHUB_CLIENT_SECRET"
 	envQuotaPerDay  = "TYPST_D2_MCP_QUOTA_PER_DAY"
+	envLogLevel     = "TYPST_D2_MCP_LOG_LEVEL"
+	envLogFormat    = "TYPST_D2_MCP_LOG_FORMAT"
 
 	defaultAddr           = ":8080"
 	defaultPath           = "/mcp"
@@ -83,7 +86,8 @@ func durationEnv(key string, def time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil || d < 0 {
-		fmt.Fprintf(os.Stderr, "%s: invalid duration %q, using default %s\n", key, v, def)
+		slog.Warn("invalid duration env, using default",
+			"env", key, "value", v, "default", def.String())
 		return def
 	}
 	return d
@@ -96,7 +100,8 @@ func int64Env(key string, def int64) int64 {
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || n < 0 {
-		fmt.Fprintf(os.Stderr, "%s: invalid integer %q, using default %d\n", key, v, def)
+		slog.Warn("invalid integer env, using default",
+			"env", key, "value", v, "default", def)
 		return def
 	}
 	return n
@@ -168,15 +173,17 @@ VERIFYING THE RESULT:
   yourself, advise the user to inspect it.`
 
 func main() {
+	initLogger()
+
 	factory, err := selectFactory()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Workspace setup: %v\n", err)
+		slog.Error("workspace setup failed", "err", err)
 		os.Exit(1)
 	}
 
 	backend, ghHandlers, store, closer, err := selectAuth()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Auth setup: %v\n", err)
+		slog.Error("auth setup failed", "err", err)
 		os.Exit(1)
 	}
 	if closer != nil {
@@ -194,12 +201,51 @@ func main() {
 	registerTools(s, factory, store)
 	registerResources(s, factory)
 
-	fmt.Fprintf(os.Stderr, "%s: auth=%s quota_per_day=%d\n", serverName, backend.Name(), quotaPerDay())
+	slog.Info("starting",
+		"version", serverVersion,
+		"auth", backend.Name(),
+		"quota_per_day", quotaPerDay(),
+		"compile_timeout", compileTimeout().String(),
+		"max_input_bytes", maxInputBytes(),
+	)
 
 	if err := serve(s, backend, ghHandlers); err != nil {
-		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+		slog.Error("server stopped", "err", err)
 		os.Exit(1)
 	}
+}
+
+// initLogger wires log/slog as the default logger before any other
+// code runs. Output goes to stderr (so stdio-mode stdout stays
+// reserved for the MCP protocol). HTTP mode defaults to JSON for
+// container log aggregators; stdio defaults to human-readable text
+// for local development.
+func initLogger() {
+	level := slog.LevelInfo
+	switch strings.ToLower(os.Getenv(envLogLevel)) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	format := strings.ToLower(os.Getenv(envLogFormat))
+	if format == "" {
+		if isHTTPTransport() {
+			format = "json"
+		} else {
+			format = "text"
+		}
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	var handler slog.Handler
+	if format == "json" {
+		handler = slog.NewJSONHandler(os.Stderr, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, opts)
+	}
+	slog.SetDefault(slog.New(handler))
 }
 
 // gitHubHandlers bundles the HTTP endpoints exposed by the GitHub auth
@@ -226,8 +272,8 @@ func selectFactory() (workspace.Factory, error) {
 	root := os.Getenv(envWorkspace)
 	if root == "" && isHTTPTransport() {
 		root = filepath.Join(os.TempDir(), "typst-d2-mcp-workspace")
-		fmt.Fprintf(os.Stderr, "%s: no %s set, using temporary workspace %s\n",
-			serverName, envWorkspace, root)
+		slog.Warn("no workspace configured; using tmp dir",
+			"env", envWorkspace, "path", root)
 	}
 	if root == "" {
 		return workspace.LocalFactory{}, nil
@@ -320,7 +366,7 @@ func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers) error 
 			mux.HandleFunc("/auth/github/callback", gh.callback)
 		}
 
-		fmt.Fprintf(os.Stderr, "%s listening on http://%s%s\n", serverName, addr, path)
+		slog.Info("listening", "addr", addr, "path", path)
 		return http.ListenAndServe(addr, mux) //nolint:gosec // intentional plain HTTP; TLS is terminated upstream.
 	default:
 		return fmt.Errorf("unknown %s=%q (expected stdio or http)", envTransport, transport)
@@ -335,6 +381,11 @@ func authMiddleware(backend auth.Backend, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := backend.IdentifyFromRequest(r)
 		if err != nil {
+			slog.Warn("auth rejected",
+				"backend", backend.Name(),
+				"remote", r.RemoteAddr,
+				"err", err.Error(),
+			)
 			w.Header().Set("WWW-Authenticate", `Bearer realm="typst-d2-mcp"`)
 			http.Error(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
 			return
@@ -433,17 +484,21 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		// Quota gate runs first so a quota-exceeded user pays no
 		// compute cost. Only authenticated identities are metered;
 		// stdio + AUTH=none stay unlimited.
+		start := time.Now()
 		id, _ := identity.FromContext(ctx)
+		log := slog.With("user", id.UserID, "file_path", filePath)
 		if store != nil && !id.IsAnonymous() {
 			limit := quotaPerDay()
 			today := time.Now().UTC().Format("2006-01-02")
 			if err := store.IncrementCompile(ctx, id.UserID, today, limit); err != nil {
 				if errors.Is(err, authdb.ErrQuotaExceeded) {
+					log.Warn("quota exceeded", "limit", limit)
 					return mcp.NewToolResultError(fmt.Sprintf(
 						"quota exceeded: %d compile(s) per UTC day per user (resets at 00:00 UTC; set %s to raise)",
 						limit, envQuotaPerDay,
 					)), nil
 				}
+				log.Error("quota check failed", "err", err)
 				return mcp.NewToolResultErrorFromErr("quota check", err), nil
 			}
 		}
@@ -526,6 +581,10 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		successMsg += "   - Reduce number of nodes or simplify structure\n"
 		successMsg += "\nIf you cannot view the PDF yourself, inform the user to check the layout."
 
+		log.Info("compile ok",
+			"output", toolVisibleOut,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{Type: "text", Text: successMsg},
