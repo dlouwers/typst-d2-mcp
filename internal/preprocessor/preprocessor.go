@@ -145,15 +145,31 @@ func parseOptions(optionsStr string) d2.Options {
 	return options
 }
 
-// svgToTypstImage converts SVG content to a Typst image() call using base64 encoding.
+// svgToTypstImage converts SVG content to a Typst image() call using base64
+// encoding. The image is rendered at width: 100% by default so a wide D2
+// diagram scales to fit the page instead of overflowing horizontally —
+// without this cap, Typst emits placement warnings, drops subsequent
+// content, and produces a silently-truncated PDF (exit code 0 + warning
+// on stderr).
+//
+// An explicit "width" key in options overrides the default; "none" or
+// the literal "intrinsic" disables the constraint entirely so the SVG
+// renders at its natural size (rarely what you want, but supported for
+// callers who know).
 func svgToTypstImage(svgContent string, options d2.Options) string {
-	// Encode SVG as base64
 	b64 := base64.StdEncoding.EncodeToString([]byte(svgContent))
 
-	// Create Typst image call
-	typstCode := fmt.Sprintf(`#image(decode64("%s"), format: "svg")`, b64)
+	width, ok := options["width"]
+	if !ok {
+		width = "100%"
+	}
+	var typstCode string
+	if width == "none" || width == "intrinsic" {
+		typstCode = fmt.Sprintf(`#image(decode64("%s"), format: "svg")`, b64)
+	} else {
+		typstCode = fmt.Sprintf(`#image(decode64("%s"), format: "svg", width: %s)`, b64, width)
+	}
 
-	// Add padding if specified
 	if pad, ok := options["pad"]; ok && pad != "none" {
 		typstCode = fmt.Sprintf(`#pad(%s, %s)`, pad, typstCode)
 	}
