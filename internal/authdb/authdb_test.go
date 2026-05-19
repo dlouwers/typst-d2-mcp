@@ -64,6 +64,50 @@ func TestIdentityForKey_Invalid(t *testing.T) {
 	}
 }
 
+func TestIncrementCompile_UnderAtOver(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const u, day = "gh:42", "2026-05-19"
+
+	// Two successful increments under a limit of 3.
+	for i := 0; i < 2; i++ {
+		if err := s.IncrementCompile(ctx, u, day, 3); err != nil {
+			t.Fatalf("increment %d under limit: %v", i, err)
+		}
+	}
+
+	// Third hits the limit exactly — still allowed.
+	if err := s.IncrementCompile(ctx, u, day, 3); err != nil {
+		t.Fatalf("third increment (at limit boundary): %v", err)
+	}
+
+	// Fourth is over the limit.
+	err := s.IncrementCompile(ctx, u, day, 3)
+	if !errors.Is(err, ErrQuotaExceeded) {
+		t.Errorf("over-limit err = %v, want ErrQuotaExceeded", err)
+	}
+
+	// Same user, next day — fresh counter.
+	if err := s.IncrementCompile(ctx, u, "2026-05-20", 3); err != nil {
+		t.Errorf("next-day fresh counter: %v", err)
+	}
+
+	// Different user on the same day — independent counter.
+	if err := s.IncrementCompile(ctx, "gh:99", day, 1); err != nil {
+		t.Errorf("different user same day: %v", err)
+	}
+}
+
+func TestIncrementCompile_LimitZeroDisabled(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	for i := 0; i < 10; i++ {
+		if err := s.IncrementCompile(ctx, "gh:1", "2026-05-19", 0); err != nil {
+			t.Fatalf("limit=0 should be a no-op, got %v", err)
+		}
+	}
+}
+
 func TestUpsertRefreshesProfile(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
