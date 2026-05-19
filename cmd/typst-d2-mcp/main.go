@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dlouwers/typst-d2-mcp/internal/auth"
+	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
+	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 	"github.com/dlouwers/typst-d2-mcp/internal/preprocessor"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -29,6 +33,12 @@ const (
 	envWorkspace      = "TYPST_D2_MCP_WORKSPACE"
 	envCompileTimeout = "TYPST_D2_MCP_COMPILE_TIMEOUT"
 	envMaxInputBytes  = "TYPST_D2_MCP_MAX_INPUT_BYTES"
+
+	envAuth         = "TYPST_D2_MCP_AUTH"
+	envDB           = "TYPST_D2_MCP_DB"
+	envPublicURL    = "TYPST_D2_MCP_PUBLIC_URL"
+	envGitHubID     = "TYPST_D2_MCP_GITHUB_CLIENT_ID"
+	envGitHubSecret = "TYPST_D2_MCP_GITHUB_CLIENT_SECRET"
 
 	defaultAddr           = ":8080"
 	defaultPath           = "/mcp"
@@ -147,10 +157,19 @@ VERIFYING THE RESULT:
   yourself, advise the user to inspect it.`
 
 func main() {
-	resolver, err := selectResolver()
+	factory, err := selectFactory()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Resolver setup: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Workspace setup: %v\n", err)
 		os.Exit(1)
+	}
+
+	backend, ghHandlers, closer, err := selectAuth()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Auth setup: %v\n", err)
+		os.Exit(1)
+	}
+	if closer != nil {
+		defer closer()
 	}
 
 	s := server.NewMCPServer(
@@ -161,39 +180,93 @@ func main() {
 		server.WithInstructions(serverInstructions),
 	)
 
-	registerTools(s, resolver)
-	registerResources(s, resolver)
+	registerTools(s, factory)
+	registerResources(s, factory)
 
-	if err := serve(s); err != nil {
+	fmt.Fprintf(os.Stderr, "%s: auth=%s\n", serverName, backend.Name())
+
+	if err := serve(s, backend, ghHandlers); err != nil {
 		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// selectResolver picks the active workspace.Resolver:
+// gitHubHandlers bundles the HTTP endpoints exposed by the GitHub auth
+// backend; nil when AUTH is not "github".
+type gitHubHandlers struct {
+	login    http.HandlerFunc
+	callback http.HandlerFunc
+}
+
+// selectFactory picks the workspace.Factory used to mint per-request
+// resolvers. Behaviour by mode:
 //
-//   - If TYPST_D2_MCP_WORKSPACE is set, a ScopedFS rooted there is used
-//     regardless of transport. This is the "hosted" / sandboxed shape and
-//     is required for HTTP mode in any deployment that isn't a personal
-//     localhost experiment.
+//   - stdio without TYPST_D2_MCP_WORKSPACE: LocalFactory (back-compat
+//     with the installed CLI experience).
 //
-//   - Otherwise, stdio mode keeps the existing LocalFS behavior so the
-//     installed CLI experience is unchanged.
+//   - Any mode with TYPST_D2_MCP_WORKSPACE set: TenantFactory rooted
+//     there. Per-user subdirectories are created on demand by the
+//     factory.
 //
-//   - HTTP without a workspace env falls back to a per-process default
-//     under the system tmp dir. Suitable for "I just want to try the HTTP
-//     transport on my laptop"; real deployments should set the env.
-func selectResolver() (workspace.Resolver, error) {
-	if root := os.Getenv(envWorkspace); root != "" {
-		return workspace.NewScopedFS(root)
-	}
-	if isHTTPTransport() {
-		fallback := filepath.Join(os.TempDir(), "typst-d2-mcp-workspace")
+//   - HTTP without TYPST_D2_MCP_WORKSPACE: TenantFactory rooted at a
+//     per-process tmp dir. Suitable for laptop experiments; real
+//     deployments should set the env.
+func selectFactory() (workspace.Factory, error) {
+	root := os.Getenv(envWorkspace)
+	if root == "" && isHTTPTransport() {
+		root = filepath.Join(os.TempDir(), "typst-d2-mcp-workspace")
 		fmt.Fprintf(os.Stderr, "%s: no %s set, using temporary workspace %s\n",
-			serverName, envWorkspace, fallback)
-		return workspace.NewScopedFS(fallback)
+			serverName, envWorkspace, root)
 	}
-	return workspace.LocalFS{}, nil
+	if root == "" {
+		return workspace.LocalFactory{}, nil
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("workspace abs: %w", err)
+	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("create workspace root: %w", err)
+	}
+	return workspace.TenantFactory{Root: abs}, nil
+}
+
+// selectAuth picks the active auth.Backend and, for the GitHub backend,
+// returns its HTTP handlers and a cleanup closure (the SQLite store).
+func selectAuth() (auth.Backend, *gitHubHandlers, func(), error) {
+	mode := strings.ToLower(os.Getenv(envAuth))
+	switch mode {
+	case "", "none":
+		return auth.None{}, nil, nil, nil
+	case "github":
+		dbPath := os.Getenv(envDB)
+		if dbPath == "" {
+			return nil, nil, nil, fmt.Errorf("%s=github requires %s to be set", envAuth, envDB)
+		}
+		clientID := os.Getenv(envGitHubID)
+		clientSecret := os.Getenv(envGitHubSecret)
+		publicURL := os.Getenv(envPublicURL)
+		if clientID == "" || clientSecret == "" || publicURL == "" {
+			return nil, nil, nil, fmt.Errorf("%s=github requires %s, %s, and %s",
+				envAuth, envGitHubID, envGitHubSecret, envPublicURL)
+		}
+		store, err := authdb.Open(dbPath)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("open auth db: %w", err)
+		}
+		gh := &auth.GitHub{
+			Cfg: auth.GitHubConfig{
+				ClientID:     clientID,
+				ClientSecret: clientSecret,
+				PublicURL:    publicURL,
+			},
+			Store: store,
+		}
+		closer := func() { _ = store.Close() }
+		return gh, &gitHubHandlers{login: gh.ServeLogin, callback: gh.ServeCallback}, closer, nil
+	default:
+		return nil, nil, nil, fmt.Errorf("unknown %s=%q (expected none or github)", envAuth, mode)
+	}
 }
 
 func isHTTPTransport() bool {
@@ -201,9 +274,10 @@ func isHTTPTransport() bool {
 	return t == "http" || t == "streamable-http"
 }
 
-func serve(s *server.MCPServer) error {
+func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers) error {
 	switch transport := strings.ToLower(os.Getenv(envTransport)); transport {
 	case "", "stdio":
+		// Stdio is always anonymous; the backend is irrelevant.
 		return server.ServeStdio(s)
 	case "http", "streamable-http":
 		addr := os.Getenv(envAddr)
@@ -214,22 +288,63 @@ func serve(s *server.MCPServer) error {
 		if path == "" {
 			path = defaultPath
 		}
-		// Stateless: each request stands on its own. Per-tenant state is
-		// not derived from the MCP session — it will come from auth in a
-		// follow-up sub-issue. Stateless avoids forcing clients to thread
-		// a Mcp-Session-Id header through every call.
+		// Stateless: each request stands on its own; identity is
+		// derived from the request's Authorization header by the
+		// middleware below.
 		httpSrv := server.NewStreamableHTTPServer(s,
 			server.WithEndpointPath(path),
 			server.WithStateLess(true),
 		)
+
+		mux := http.NewServeMux()
+		mux.Handle(path, authMiddleware(backend, httpSrv))
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+		if gh != nil {
+			mux.HandleFunc("/login", gh.login)
+			mux.HandleFunc("/auth/github/callback", gh.callback)
+		}
+
 		fmt.Fprintf(os.Stderr, "%s listening on http://%s%s\n", serverName, addr, path)
-		return httpSrv.Start(addr)
+		return http.ListenAndServe(addr, mux) //nolint:gosec // intentional plain HTTP; TLS is terminated upstream.
 	default:
 		return fmt.Errorf("unknown %s=%q (expected stdio or http)", envTransport, transport)
 	}
 }
 
-func registerTools(s *server.MCPServer, resolver workspace.Resolver) {
+// authMiddleware identifies the principal behind r via backend and
+// attaches the resulting Identity to the request context. Backends
+// that don't admit anonymous traffic (i.e. GitHub) cause a 401 when
+// IdentifyFromRequest returns an error.
+func authMiddleware(backend auth.Backend, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, err := backend.IdentifyFromRequest(r)
+		if err != nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="typst-d2-mcp"`)
+			http.Error(w, "unauthorized: "+err.Error(), http.StatusUnauthorized)
+			return
+		}
+		ctx := identity.WithIdentity(r.Context(), id)
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// resolverFor returns the active resolver for the request's identity,
+// or, when no identity has been threaded through (e.g. stdio), the
+// resolver for the anonymous tenant.
+func resolverFor(ctx context.Context, factory workspace.Factory) (workspace.Resolver, error) {
+	id, _ := identity.FromContext(ctx)
+	r, err := factory.Resolver(id)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+
+func registerTools(s *server.MCPServer, factory workspace.Factory) {
 	// The bulk of the layout strategy lives in server instructions above so
 	// it isn't re-sent on every tool call. The description below carries
 	// only the rules the model needs at the moment it decides to call.
@@ -256,7 +371,7 @@ split it, simplify it, or switch to 'direction: down'.`),
 			mcp.Description("Path to the Typst source file (.typ) containing #d2[...] blocks. Absolute in local stdio mode; workspace-relative in scoped/hosted mode."),
 		),
 	)
-	s.AddTool(compileTypstTool, handleCompileTypst(resolver))
+	s.AddTool(compileTypstTool, handleCompileTypst(factory))
 
 	putFileTool := mcp.NewTool("put_file",
 		mcp.WithDescription(`Write a file into the server's active workspace.
@@ -282,24 +397,29 @@ relative and stay within the workspace (traversal is rejected).`),
 			mcp.Description(`"utf8" (default) for text or "base64" for binary data.`),
 		),
 	)
-	s.AddTool(putFileTool, handlePutFile(resolver))
+	s.AddTool(putFileTool, handlePutFile(factory))
 }
 
-func registerResources(s *server.MCPServer, resolver workspace.Resolver) {
+func registerResources(s *server.MCPServer, factory workspace.Factory) {
 	tmpl := mcp.ResourceTemplate{
 		URITemplate: &mcp.URITemplate{Template: uritemplate.MustNew(pdfURIPrefix + "{+path}")},
 		Name:        "pdf",
 		Description: "Compiled Typst PDF produced by compile_typst_with_d2.",
 		MIMEType:    "application/pdf",
 	}
-	s.AddResourceTemplate(tmpl, handleReadPDF(resolver))
+	s.AddResourceTemplate(tmpl, handleReadPDF(factory))
 }
 
-func handleCompileTypst(resolver workspace.Resolver) server.ToolHandlerFunc {
+func handleCompileTypst(factory workspace.Factory) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		filePath, err := request.RequireString("file_path")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		resolver, err := resolverFor(ctx, factory)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("workspace setup", err), nil
 		}
 
 		resolvedIn, err := workspace.MustExist(resolver, filePath)
@@ -384,7 +504,7 @@ func handleCompileTypst(resolver workspace.Resolver) server.ToolHandlerFunc {
 	}
 }
 
-func handlePutFile(resolver workspace.Resolver) server.ToolHandlerFunc {
+func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path, err := request.RequireString("path")
 		if err != nil {
@@ -393,6 +513,10 @@ func handlePutFile(resolver workspace.Resolver) server.ToolHandlerFunc {
 		content, err := request.RequireString("content")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+		resolver, err := resolverFor(ctx, factory)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("workspace setup", err), nil
 		}
 		encoding := strings.ToLower(request.GetString("encoding", "utf8"))
 
@@ -424,7 +548,7 @@ func handlePutFile(resolver workspace.Resolver) server.ToolHandlerFunc {
 	}
 }
 
-func handleReadPDF(resolver workspace.Resolver) server.ResourceTemplateHandlerFunc {
+func handleReadPDF(factory workspace.Factory) server.ResourceTemplateHandlerFunc {
 	return func(ctx context.Context, request mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		uri := request.Params.URI
 		if !strings.HasPrefix(uri, pdfURIPrefix) {
@@ -434,6 +558,10 @@ func handleReadPDF(resolver workspace.Resolver) server.ResourceTemplateHandlerFu
 		path, err := url.PathUnescape(raw)
 		if err != nil {
 			return nil, fmt.Errorf("decode URI path: %w", err)
+		}
+		resolver, err := resolverFor(ctx, factory)
+		if err != nil {
+			return nil, fmt.Errorf("workspace setup: %w", err)
 		}
 		resolved, err := workspace.MustExist(resolver, path)
 		if err != nil {

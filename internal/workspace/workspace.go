@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 )
 
 // Resolver maps a tool-visible path to a concrete filesystem path the
@@ -111,6 +113,41 @@ func (s *ScopedFS) Resolve(path string) (string, error) {
 		return "", fmt.Errorf("path escapes workspace: %s", path)
 	}
 	return cleaned, nil
+}
+
+// Factory picks the workspace.Resolver for a given identity. It lets
+// the server route per-tenant requests to per-tenant filesystems
+// without each handler knowing whether the deployment is local,
+// shared-scoped, or per-user.
+type Factory interface {
+	// Resolver returns the active resolver for id. Stateless
+	// deployments may ignore id; tenant deployments return a
+	// ScopedFS rooted under id.UserID.
+	Resolver(id identity.Identity) (Resolver, error)
+}
+
+// LocalFactory always returns LocalFS{}, regardless of identity. Used
+// in stdio mode and for self-hosted deployments without auth.
+type LocalFactory struct{}
+
+// Resolver implements Factory.
+func (LocalFactory) Resolver(identity.Identity) (Resolver, error) {
+	return LocalFS{}, nil
+}
+
+// TenantFactory issues a per-identity ScopedFS rooted at Root/UserID.
+// Roots are created on demand with 0o700 permissions; concurrent
+// requests for the same user race on MkdirAll harmlessly.
+type TenantFactory struct {
+	Root string
+}
+
+// Resolver implements Factory. id.UserID must be non-empty.
+func (f TenantFactory) Resolver(id identity.Identity) (Resolver, error) {
+	if id.UserID == "" {
+		return nil, fmt.Errorf("tenant factory requires non-empty UserID")
+	}
+	return NewScopedFS(filepath.Join(f.Root, id.UserID))
 }
 
 // WriteFile resolves path through r and writes content, creating parent
