@@ -20,6 +20,12 @@ import (
 // endpoint omits the Authorization: Bearer header.
 var ErrMissingBearer = errors.New("missing or malformed Authorization header")
 
+// ErrNotAllowlisted is returned when a valid token belongs to a
+// GitHub account that is not on the configured AllowedLogins set.
+// Enforced on every request, so removing someone from the allowlist
+// invalidates their existing tokens immediately.
+var ErrNotAllowlisted = errors.New("github account not on the allowlist")
+
 // GitHubConfig holds the deployment-specific values needed for the
 // OAuth dance. Endpoints default to GitHub's production URLs and can
 // be overridden for testing.
@@ -42,6 +48,23 @@ type GitHubConfig struct {
 	// user endpoints. Nil means http.DefaultClient with a 10s
 	// timeout.
 	HTTPClient *http.Client
+
+	// AllowedLogins, when non-empty, restricts the server to the
+	// listed GitHub logins (case-insensitive). Any other account is
+	// turned away both at OAuth callback time and on every /mcp
+	// request. Empty means open to any GitHub account — the public
+	// free-tier posture. Used to lock the test environment to the
+	// operator only.
+	AllowedLogins map[string]bool
+}
+
+// loginAllowed reports whether the GitHub login may use this server.
+// An empty AllowedLogins set means "no restriction".
+func (c GitHubConfig) loginAllowed(login string) bool {
+	if len(c.AllowedLogins) == 0 {
+		return true
+	}
+	return c.AllowedLogins[strings.ToLower(strings.TrimSpace(login))]
 }
 
 func (c GitHubConfig) authorizeURL() string {
@@ -88,7 +111,16 @@ func (g *GitHub) IdentifyFromRequest(r *http.Request) (identity.Identity, error)
 	if token == "" {
 		return identity.Identity{}, ErrMissingBearer
 	}
-	return g.Store.IdentityForKey(r.Context(), token)
+	id, err := g.Store.IdentityForKey(r.Context(), token)
+	if err != nil {
+		return identity.Identity{}, err
+	}
+	// Allowlist is authoritative on every request — a token minted
+	// before the allowlist was tightened stops working at once.
+	if !g.Cfg.loginAllowed(id.GitHubLogin) {
+		return identity.Identity{}, ErrNotAllowlisted
+	}
+	return id, nil
 }
 
 // Name returns the backend's startup label.
@@ -128,6 +160,16 @@ func (g *GitHub) ServeCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		redirectOAuthError(w, r, session.RedirectURI, session.ClientState,
 			"server_error", "github user fetch failed")
+		return
+	}
+	// Reject non-allowlisted accounts at sign-in time with a clean
+	// OAuth access_denied — they never get a token. The check is
+	// repeated on every request in IdentifyFromRequest, so this is
+	// the friendly early gate rather than the authoritative one.
+	if !g.Cfg.loginAllowed(gu.Login) {
+		slog.Warn("oauth login rejected: not allowlisted", "login", gu.Login, "github_id", gu.ID)
+		redirectOAuthError(w, r, session.RedirectURI, session.ClientState,
+			"access_denied", "this GitHub account is not authorised for this server")
 		return
 	}
 	userDBID, err := g.Store.UpsertGitHubUser(r.Context(), gu.ID, gu.Login, gu.Email)
