@@ -46,8 +46,9 @@ const (
 	envAuth         = "TYPST_D2_MCP_AUTH"
 	envDB           = "TYPST_D2_MCP_DB"
 	envPublicURL    = "TYPST_D2_MCP_PUBLIC_URL"
-	envGitHubID     = "TYPST_D2_MCP_GITHUB_CLIENT_ID"
-	envGitHubSecret = "TYPST_D2_MCP_GITHUB_CLIENT_SECRET"
+	envGitHubID        = "TYPST_D2_MCP_GITHUB_CLIENT_ID"
+	envGitHubSecret    = "TYPST_D2_MCP_GITHUB_CLIENT_SECRET"
+	envGitHubAllowlist = "TYPST_D2_MCP_GITHUB_ALLOWLIST"
 	envQuotaPerDay  = "TYPST_D2_MCP_QUOTA_PER_DAY"
 	envLogLevel     = "TYPST_D2_MCP_LOG_LEVEL"
 	envLogFormat    = "TYPST_D2_MCP_LOG_FORMAT"
@@ -343,9 +344,10 @@ func selectAuth() (auth.Backend, *gitHubHandlers, *authdb.Store, func(), error) 
 		}
 		gh := &auth.GitHub{
 			Cfg: auth.GitHubConfig{
-				ClientID:     clientID,
-				ClientSecret: clientSecret,
-				PublicURL:    publicURL,
+				ClientID:      clientID,
+				ClientSecret:  clientSecret,
+				PublicURL:     publicURL,
+				AllowedLogins: parseAllowlist(os.Getenv(envGitHubAllowlist)),
 			},
 			Store: store,
 		}
@@ -361,6 +363,24 @@ func selectAuth() (auth.Backend, *gitHubHandlers, *authdb.Store, func(), error) 
 	default:
 		return nil, nil, nil, nil, fmt.Errorf("unknown %s=%q (expected none or github)", envAuth, mode)
 	}
+}
+
+// parseAllowlist turns a comma-separated TYPST_D2_MCP_GITHUB_ALLOWLIST
+// value into a lowercased set of permitted GitHub logins. An empty or
+// whitespace-only value yields nil — meaning "no restriction", the
+// public free-tier posture.
+func parseAllowlist(raw string) map[string]bool {
+	set := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		login := strings.ToLower(strings.TrimSpace(part))
+		if login != "" {
+			set[login] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
 }
 
 func isHTTPTransport() bool {

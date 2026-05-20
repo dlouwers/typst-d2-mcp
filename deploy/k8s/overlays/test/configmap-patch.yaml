@@ -1,14 +1,19 @@
-# Test overlay: point TYPST_D2_MCP_PUBLIC_URL at the test hostname so
-# the GitHub OAuth callback URL matches. The corresponding test
-# OAuth app must be registered with the same callback URL.
+# Test overlay config. The test environment is locked to the operator's
+# own GitHub account and runs unmetered — it's a staging surface, not a
+# public free tier.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: typst-d2-mcp-config
   namespace: typst-d2-mcp
 data:
+  # Callback URL must match the test OAuth app's registration.
   TYPST_D2_MCP_PUBLIC_URL: "https://test.typst-d2-mcp.stormlantern.nl"
-  # Generous quota in test — lets you exercise the metered path
-  # repeatedly without waiting for UTC midnight.
-  TYPST_D2_MCP_QUOTA_PER_DAY: "20"
+  # Allowlist: only this GitHub login can authenticate. Any other
+  # account is turned away at OAuth callback time and on every
+  # request. Comma-separate to add more.
+  TYPST_D2_MCP_GITHUB_ALLOWLIST: "dlouwers"
+  # Quota disabled. Since the allowlist restricts the whole env to
+  # one operator, "0 = unlimited" is effectively "unlimited for me".
+  TYPST_D2_MCP_QUOTA_PER_DAY: "0"
   TYPST_D2_MCP_LOG_LEVEL: "debug"

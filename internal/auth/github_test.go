@@ -96,6 +96,89 @@ func TestNone_AlwaysAnonymous(t *testing.T) {
 	}
 }
 
+func TestGitHubConfig_loginAllowed(t *testing.T) {
+	open := GitHubConfig{}
+	if !open.loginAllowed("anyone") {
+		t.Error("empty allowlist should permit any login")
+	}
+
+	restricted := GitHubConfig{AllowedLogins: map[string]bool{"dlouwers": true}}
+	if !restricted.loginAllowed("dlouwers") {
+		t.Error("allowlisted login should be permitted")
+	}
+	if !restricted.loginAllowed("DLOUWERS") {
+		t.Error("allowlist match must be case-insensitive")
+	}
+	if !restricted.loginAllowed("  dlouwers ") {
+		t.Error("allowlist match must tolerate surrounding whitespace")
+	}
+	if restricted.loginAllowed("octocat") {
+		t.Error("non-allowlisted login must be rejected")
+	}
+}
+
+// A token belonging to a non-allowlisted account must be rejected on
+// every request, even though the token itself is valid in the store.
+func TestGitHub_IdentifyFromRequest_Allowlist(t *testing.T) {
+	g := newGitHubBackend(t, "")
+	g.Cfg.AllowedLogins = map[string]bool{"dlouwers": true}
+	ctx := t.Context()
+
+	// Mint a key for an allowlisted user and a non-allowlisted one.
+	okUID, _ := g.Store.UpsertGitHubUser(ctx, 1, "dlouwers", "d@example.com")
+	okKey, _ := g.Store.IssueAPIKey(ctx, okUID)
+	badUID, _ := g.Store.UpsertGitHubUser(ctx, 2, "octocat", "o@example.com")
+	badKey, _ := g.Store.IssueAPIKey(ctx, badUID)
+
+	okReq := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	okReq.Header.Set("Authorization", "Bearer "+okKey)
+	if _, err := g.IdentifyFromRequest(okReq); err != nil {
+		t.Errorf("allowlisted user rejected: %v", err)
+	}
+
+	badReq := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	badReq.Header.Set("Authorization", "Bearer "+badKey)
+	if _, err := g.IdentifyFromRequest(badReq); !errors.Is(err, ErrNotAllowlisted) {
+		t.Errorf("non-allowlisted user err = %v, want ErrNotAllowlisted", err)
+	}
+}
+
+// A non-allowlisted account that completes GitHub sign-in must be
+// bounced back to the MCP client with OAuth error=access_denied,
+// never reaching the token-mint step.
+func TestGitHub_Callback_AllowlistRejection(t *testing.T) {
+	ts := fakeGitHub(t, "code-xyz", "gh-token", "octocat", 42, "o@example.com")
+	defer ts.Close()
+	g := newGitHubBackend(t, ts.URL)
+	g.Cfg.AllowedLogins = map[string]bool{"dlouwers": true}
+
+	c, _ := g.Store.RegisterClient(t.Context(), "x", []string{"https://localhost/cb"}, "none")
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", c.ClientID)
+	q.Set("redirect_uri", "https://localhost/cb")
+	q.Set("state", "cs")
+	q.Set("code_challenge", "irrelevant-for-this-test")
+	q.Set("code_challenge_method", "S256")
+	azResp := httptest.NewRecorder()
+	g.ServeAuthorize(azResp, httptest.NewRequest(http.MethodGet, pathAuthorize+"?"+q.Encode(), nil))
+	loc, _ := url.Parse(azResp.Header().Get("Location"))
+	sid := loc.Query().Get("state")
+
+	cbResp := httptest.NewRecorder()
+	g.ServeCallback(cbResp, httptest.NewRequest(http.MethodGet, pathGitHubCallback+"?code=code-xyz&state="+sid, nil))
+	if cbResp.Code != http.StatusFound {
+		t.Fatalf("callback status = %d, want 302", cbResp.Code)
+	}
+	cbLoc, _ := url.Parse(cbResp.Header().Get("Location"))
+	if got := cbLoc.Query().Get("error"); got != "access_denied" {
+		t.Errorf("callback error = %q, want access_denied", got)
+	}
+	if cbLoc.Query().Get("code") != "" {
+		t.Error("non-allowlisted user must not receive an authorization code")
+	}
+}
+
 // TestOAuth_FullRoundTrip walks the full MCP-spec OAuth dance against
 // a mocked GitHub: register → authorize → GitHub callback → token →
 // /mcp Bearer use. It's the closest unit-level coverage we have of
