@@ -85,39 +85,12 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 	return content, nil
 }
 
-// extractD2Calls finds all #d2[...] or #d2(options)[...] blocks in the content.
+// extractD2Calls finds every #d2(...) and #d2[...] call site in the
+// content. Delegates to the Typst-aware scanner in scan.go; see the
+// commentary there for what we recognise and what we deliberately
+// don't.
 func extractD2Calls(content string) []D2Block {
-	// Pattern: #d2(key: value, ...)[code] or #d2[code]
-	// (?s) makes . match newlines
-	pattern := regexp.MustCompile(`(?s)#d2(?:\((.*?)\))?\[(.*?)\]`)
-	matches := pattern.FindAllStringSubmatchIndex(content, -1)
-
-	blocks := make([]D2Block, 0, len(matches))
-
-	for _, match := range matches {
-		// match[0], match[1] = full match start/end
-		// match[2], match[3] = options group start/end
-		// match[4], match[5] = code group start/end
-
-		var optionsStr string
-		if match[2] != -1 && match[3] != -1 {
-			optionsStr = content[match[2]:match[3]]
-		}
-
-		code := content[match[4]:match[5]]
-
-		// Parse options
-		options := parseOptions(optionsStr)
-
-		blocks = append(blocks, D2Block{
-			Start:   match[0],
-			End:     match[1],
-			Options: options,
-			Code:    code,
-		})
-	}
-
-	return blocks
+	return scanD2Calls(content)
 }
 
 // parseOptions extracts key-value pairs from the options string.
