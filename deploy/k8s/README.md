@@ -141,7 +141,15 @@ public by default. If you flip the package to private:
   overlay and renders both namespaces side-by-side via the
   `namespace` template variable. The JSON lives at
   `dashboard/dashboards/typst-d2-mcp-overview.json` — edit there,
-  push, and grafana-operator picks it up within 5 min.
+  push, and grafana-operator picks it up within 5 min. It is filed in
+  the cluster's **Applications** folder (`folderUID: applications`);
+  the folder itself is declared in `dlouwers/experiments`
+  (`grafana-operator-cr/`, see its README for the taxonomy), never
+  from here. Two things that fail silently if you get them wrong:
+  omitting `folderUID` makes grafana-operator invent a folder named
+  after the namespace, and generating the dashboard ConfigMap without
+  `disableNameSuffixHash: true` leaves `configMapRef` pointing at a
+  name that does not exist.
 
 ## What this doesn't do (yet)
 

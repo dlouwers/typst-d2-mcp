@@ -5,9 +5,9 @@
 # Grafana instance in this cluster (matches investor-buddy).
 #
 # Dashboard JSON lives in a kustomize-generated ConfigMap (see
-# kustomization.yaml). Kustomize updates configMapRef.name with a
-# hash suffix automatically so updates don't fight in-place edits in
-# the Grafana UI.
+# kustomization.yaml, which now pins the generated name — kustomize
+# cannot rewrite configMapRef on a CRD it has no nameReference schema
+# for, and the mismatch kept this dashboard from ever rendering).
 #
 # resyncPeriod: 5m keeps iteration fast — change a panel, paste the
 # JSON into typst-d2-mcp-overview.json in this repo, push, see the
@@ -28,6 +28,24 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: "grafana"
+  # `applications` — the cluster's shared folder for every app
+  # dashboard, declared once cluster-side in dlouwers/experiments
+  # `grafana-operator-cr/folder-applications.yaml`. Do not declare a
+  # GrafanaFolder from this repo; folders are a cluster-wide concern
+  # and one shipped from an app repo is invisible to anyone reviewing
+  # the cluster.
+  #
+  # Not optional. With folderUID empty, grafana-operator's
+  # GetOrCreateFolder invents a folder named after this CR's
+  # *namespace* — so the moment the ConfigMap fix above makes this
+  # dashboard render, a folder called `typst-d2-mcp-test` would appear
+  # in the cluster's sidebar next to Infra and Observability. That
+  # exact failure, from node-exporter-full, is what
+  # dlouwers/experiments#288 was opened to clean up.
+  #
+  # folderRef is the more idiomatic reference-by-name but resolves only
+  # within the CR's own namespace, and the folder lives in `monitoring`.
+  folderUID: "applications"
   resyncPeriod: 5m
   configMapRef:
     name: typst-d2-mcp-dashboard
