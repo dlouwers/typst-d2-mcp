@@ -1,0 +1,92 @@
+# Validation of what Flux actually pulls out of this repo. See
+# dlouwers/experiments#290.
+#
+# This repo is autonomous by design. It ships its own Deployment,
+# ServiceMonitor and GrafanaDashboard, and Flux reconciles them straight from
+# here. Nothing looked at them before the cluster did, and it showed:
+# typst-d2-mcp-overview sat in git, valid, rendering nowhere, from 19 May to
+# 1 August, because the dashboard configMapGenerator lacked
+# `disableNameSuffixHash` and kustomize emitted
+# `typst-d2-mcp-dashboard-c4bfhb2gmf` while the GrafanaDashboard kept asking
+# for `typst-d2-mcp-dashboard`. Both halves individually valid; only the
+# relationship between them broken, which every schema check in existence
+# passes. On that exact build, kubeconform -strict reports "Valid: 13,
+# Invalid: 0" and the resolver below fails, naming the hash and the remedy.
+#
+# Why the workflow lives in dlouwers/ci-workflows and not in the platform repo
+# it was written in: GitHub does not let a workflow in a PUBLIC repository call
+# a reusable workflow stored in a PRIVATE one. The `uses:` cannot resolve, the
+# run fails in 0s with "This run likely failed because of a workflow file
+# issue", and no job is created — a red tick that looks like a failing check
+# and is in fact a check that never ran. This repo is public and
+# dlouwers/experiments is private, so this repo, the one the guardrail was
+# written for, was the one it could not cover. Granting Actions access on the
+# private repo does not lift it; that setting governs which repositories may be
+# granted access, not this restriction. Moving the workflow to a public
+# repository of its own is what lifts it. See dlouwers/experiments#300.
+#
+# The called workflow builds every kustomize overlay (discovered, not listed)
+# and runs:
+#   - kubeconform -strict against the CRDs the cluster actually installs, at
+#     the chart versions it pins — so a ServiceMonitor field that only exists
+#     in a newer prometheus-operator fails here, not silently on apply;
+#   - promtool over any PrometheusRule. This repo ships none today, which is
+#     why require-prometheus-rules is left unset;
+#   - a name-reference resolver: every configMapRef, referenced key,
+#     ServiceMonitor port and dashboard folderUID checked against what the
+#     build emits. That is the check that catches the class of defect above,
+#     and the only one that does.
+#
+# Its own file rather than a job in ci.yml, deliberately. A `uses:` that cannot
+# resolve — the workflow repo unreachable, the ref renamed or force-pushed away
+# — fails the whole workflow file it sits in, before any job starts. In ci.yml
+# that would take the Go build, tests and linter down with it, which is a bad
+# trade for a check that gates a different thing.
+name: manifests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to a PR makes the in-flight run irrelevant; don't pay for it.
+concurrency:
+  group: manifests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    # Pinned to a commit, never `@main`. A branch ref means any push to the
+    # workflow repository immediately changes what runs in this repository's
+    # CI — the same mutable-reference problem as a tag-pinned action, one level
+    # up. Bump it deliberately, after reading the diff. See
+    # dlouwers/experiments#301.
+    uses: dlouwers/ci-workflows/.github/workflows/validate-app-manifests.yaml@d441846849064cb5f39a04096ddc2ea2e4f2aba6 # v1.0.0
+    with:
+      # The two cluster facts the workflow cannot know. It lives in a public
+      # repository of its own and states no cluster's facts, so these travel
+      # from the caller.
+      #
+      # The chart versions must be the ones the cluster actually installs
+      # (dlouwers/experiments bootstrap/): validating a ServiceMonitor against
+      # a newer prometheus-operator's CRD passes fields that are dropped on
+      # apply, and against an older one fails fields that are fine. Move them
+      # in the same PR as the chart bump over there.
+      crd-charts: |
+        https://prometheus-community.github.io/helm-charts|kube-prometheus-stack|84.5.0
+        oci://ghcr.io/grafana/helm-charts|grafana-operator|5.22.2
+        https://traefik.github.io/charts|traefik|39.0.7
+        https://bitnami.github.io/sealed-secrets|sealed-secrets|2.16.2
+      # The folders the platform publishes (its grafana-operator-cr/). A UID
+      # not in this list does not error at runtime — grafana-operator invents a
+      # folder named after the CR — so this list is the only thing that catches
+      # it.
+      grafana-folder-uids: applications,gameservers,infra,observability,platform
+      # require-dashboard: this repo is supposed to ship one. If the overlay
+      # carrying it is ever dropped again — it was shipped from the test
+      # overlay until dlouwers/experiments#290 — that becomes a failure rather
+      # than a silence.
+      require-dashboard: true
