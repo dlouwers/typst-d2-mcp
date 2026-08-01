@@ -43,4 +43,3 @@ configMapGenerator:
     files:
       - dashboards/typst-d2-mcp-overview.json
     options:
-      disableNameSuffixHash: true
