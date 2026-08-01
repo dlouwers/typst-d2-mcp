@@ -1,0 +1,37 @@
+# Every `uses:` in .github/workflows/ is pinned to a full commit SHA rather
+# than a tag, because a tag is a mutable pointer its owner can move — which is
+# how tj-actions/changed-files leaked secrets from thousands of repositories in
+# March 2025. See dlouwers/experiments#301.
+#
+# This file is what stops that from becoming slow rot. Dependabot's
+# github-actions ecosystem understands SHA pins and rewrites the SHA and the
+# trailing version comment together; without it, a SHA pin is a pin that never
+# moves again, which is a different way of running old code.
+#
+# `directory: "/"` is correct and is not a stand-in for "/.github/workflows":
+# the ecosystem is anchored at the repository root and locates the workflow
+# directory itself. Pointing it at the literal workflow path is the classic way
+# to end up with a config Dependabot accepts and then never opens a PR from.
+#
+# This also covers the `uses:` in manifests.yml pointing at
+# dlouwers/ci-workflows — a called reusable workflow is third-party code in
+# this repository's context just as much as an action is, and the same
+# reasoning about mutable refs applies to it.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(actions)"
+    labels:
+      - "dependencies"
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    labels:
+      - "dependencies"

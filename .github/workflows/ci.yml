@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.25'
           cache: true
@@ -50,7 +50,7 @@ jobs:
         # binary that ships with Go 1.24 and refuses to lint a Go-1.25
         # module. `goinstall` recompiles the linter with the runner's
         # toolchain (set above to 1.25), avoiding the version mismatch.
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6.5.2
         with:
           version: latest
           install-mode: goinstall
