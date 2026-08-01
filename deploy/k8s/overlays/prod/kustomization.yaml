@@ -10,6 +10,24 @@ kind: Kustomization
 namespace: typst-d2-mcp
 resources:
   - ../../base
+  # Single-instance Grafana dashboard slice. Exactly one GrafanaDashboard CR
+  # exists for this app — the dashboard is a view and the environment is a
+  # filter, selected by the `namespace` template variable
+  # (`label_values(typst_d2_mcp_compile_total, namespace)`), so it renders
+  # prod and test side by side. Two CRs would collide on dashboard uid
+  # `typst-d2-mcp-overview`.
+  #
+  # It lives HERE, not in ../../base and not in overlays/test:
+  #   - base/ would ship it from both overlays → the uid collision above.
+  #   - overlays/test/ is where it used to be, which coupled production's
+  #     dashboard to the test environment's lifecycle. That is the defect
+  #     dlouwers/experiments#290 was opened to fix: observability follows
+  #     ownership, and prod is the environment that owns this.
+  #
+  # Consequence worth knowing: the CR and its ConfigMap now land in the
+  # `typst-d2-mcp` namespace. `allowCrossNamespaceImport: true` on the CR
+  # is what lets the Grafana CR in `monitoring` accept it, unchanged.
+  - ../../dashboard
   # Both sealed-*.yaml files are generated locally via `kubeseal`
   # against the cluster's controller key (see deploy/k8s/README.md).
   # They're committed only after sealing — never include the raw
