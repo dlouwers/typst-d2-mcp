@@ -39,4 +39,4 @@ patches:
 # manifest stays schema-valid before that happens.
 images:
   - name: ghcr.io/dlouwers/typst-d2-mcp
-    newTag: 20260801180526-sha-8746557 # {"$imagepolicy": "flux-system:typst-d2-mcp-test:tag"}
+    newTag: 20260801203654-sha-b6875c0 # {"$imagepolicy": "flux-system:typst-d2-mcp-test:tag"}
