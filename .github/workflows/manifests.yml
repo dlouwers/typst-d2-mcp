@@ -1,0 +1,67 @@
+# Validation of what Flux actually pulls out of this repo, run by the cluster
+# that pulls it. See dlouwers/experiments#290.
+#
+# BLOCKED — DO NOT MERGE YET. GitHub does not let a workflow in a PUBLIC
+# repository call a reusable workflow stored in a PRIVATE one. This repo is
+# public and dlouwers/experiments is private, so the `uses:` below cannot
+# resolve: the run fails in 0s with "This run likely failed because of a
+# workflow file issue" and no job is created. Verified at
+# https://github.com/dlouwers/typst-d2-mcp/actions/runs/30714033146, against
+# the same workflow that runs green on the private sibling repo
+# (https://github.com/dlouwers/investor-buddy/actions/runs/30714188883).
+# Granting Actions access on the private repo (already done) does not lift it;
+# that setting governs which repositories may be granted access, not this
+# restriction. Options are tracked as dlouwers/experiments#300 — merge this
+# once one of them lands.
+#
+# Why it is worth unblocking: this repo is autonomous by design. It ships its
+# own Deployment, ServiceMonitor and GrafanaDashboard, and Flux reconciles them
+# straight from here. Nothing looked at them before the cluster did, and it
+# showed: typst-d2-mcp-overview sat in git, valid, rendering nowhere, from
+# 19 May to 1 August, because the dashboard configMapGenerator lacked
+# `disableNameSuffixHash` and kustomize emitted
+# `typst-d2-mcp-dashboard-c4bfhb2gmf` while the GrafanaDashboard kept asking
+# for `typst-d2-mcp-dashboard`. Both halves individually valid; only the
+# relationship between them broken, which every schema check in existence
+# passes. On that exact build, kubeconform -strict reports "Valid: 13,
+# Invalid: 0" and the resolver below fails, naming the hash and the remedy.
+#
+# The called workflow builds every kustomize overlay (discovered, not listed)
+# and runs:
+#   - kubeconform -strict against the CRDs the cluster actually installs, at
+#     the chart versions it pins — so a ServiceMonitor field that only exists
+#     in a newer prometheus-operator fails here, not silently on apply;
+#   - promtool over any PrometheusRule. This repo ships none today, which is
+#     why require-prometheus-rules is left unset;
+#   - a name-reference resolver: every configMapRef, referenced key,
+#     ServiceMonitor port and dashboard folderUID checked against what the
+#     build emits.
+#
+# Its own file rather than a job in ci.yml, deliberately, and doubly so while
+# it is blocked: a `uses:` that cannot resolve fails the whole workflow file it
+# sits in, before any job starts. In ci.yml that would take the Go build, tests
+# and linter down with it.
+name: manifests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to a PR makes the in-flight run irrelevant; don't pay for it.
+concurrency:
+  group: manifests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # require-dashboard: this repo is supposed to ship one. If the overlay
+  # carrying it is ever dropped again — it was shipped from the test overlay
+  # until dlouwers/experiments#290 — that becomes a failure rather than a
+  # silence.
+  validate:
+    uses: dlouwers/experiments/.github/workflows/validate-app-manifests.yaml@main
+    with:
+      require-dashboard: true
