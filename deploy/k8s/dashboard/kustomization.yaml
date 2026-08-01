@@ -1,10 +1,17 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Single-instance dashboard slice. Pulled in by the test overlay only
-# (a single GrafanaDashboard CR renders both prod and test side-by-side
-# via the namespace template variable, so two CRs would just collide
-# on dashboard uid).
+# Single-instance dashboard slice. Pulled in by the **prod** overlay
+# only (a single GrafanaDashboard CR renders both prod and test
+# side-by-side via the namespace template variable, so two CRs would
+# just collide on dashboard uid).
+#
+# It was the test overlay until dlouwers/experiments#290: "exactly
+# once" was the right call, but hanging it off test made production's
+# dashboard a dependent of the test environment — suspend test and
+# prod loses its dashboard — and put the CR in `typst-d2-mcp-test`,
+# which reads to anyone inspecting the cluster as "prod has no
+# dashboard at all".
 
 resources:
   - grafanadashboard.yaml

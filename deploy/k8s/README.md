@@ -11,7 +11,7 @@ deploy/k8s/
 ├── overlays/
 │   ├── prod/       # typst-d2-mcp.stormlantern.nl, pinned semver image
 │   └── test/       # test.typst-d2-mcp.stormlantern.nl, Flux-bumped tag
-└── dashboard/      # GrafanaDashboard CR + JSON, included by test only
+└── dashboard/      # GrafanaDashboard CR + JSON, included by prod only
 ```
 
 ## First-time setup
@@ -137,9 +137,13 @@ public by default. If you flip the package to private:
 - **Logs**: stdout/stderr only — JSON when `TYPST_D2_MCP_LOG_FORMAT=json`
   (image default). The cluster's log aggregator (Promtail/Loki or
   equivalent) picks them up automatically.
-- **Dashboards**: a single GrafanaDashboard CR ships from the test
+- **Dashboards**: a single GrafanaDashboard CR ships from the **prod**
   overlay and renders both namespaces side-by-side via the
-  `namespace` template variable. The JSON lives at
+  `namespace` template variable. One dashboard per service, environment
+  as a filter — not one dashboard per environment. It ships from prod
+  rather than test because the artifact must not outlive-or-die-with the
+  environment it does not describe; it was on test until
+  `dlouwers/experiments#290`. The JSON lives at
   `dashboard/dashboards/typst-d2-mcp-overview.json` — edit there,
   push, and grafana-operator picks it up within 5 min. It is filed in
   the cluster's **Applications** folder (`folderUID: applications`);

@@ -20,7 +20,8 @@ metadata:
     app.kubernetes.io/name: typst-d2-mcp
 spec:
   # The Grafana CR lives in `monitoring`; this CR lives in
-  # `typst-d2-mcp-test`. grafana-operator defaults to
+  # `typst-d2-mcp` (the prod overlay's namespace — see
+  # kustomization.yaml). grafana-operator defaults to
   # same-namespace-only attachment — cross-namespace must be opted
   # in here AND the Grafana CR must allow the matching namespace via
   # its resourceSelector (already permissive in this cluster).
@@ -38,13 +39,19 @@ spec:
   # Not optional. With folderUID empty, grafana-operator's
   # GetOrCreateFolder invents a folder named after this CR's
   # *namespace* — so the moment the ConfigMap fix above makes this
-  # dashboard render, a folder called `typst-d2-mcp-test` would appear
+  # dashboard render, a folder called `typst-d2-mcp` would appear
   # in the cluster's sidebar next to Infra and Observability. That
   # exact failure, from node-exporter-full, is what
   # dlouwers/experiments#288 was opened to clean up.
   #
   # folderRef is the more idiomatic reference-by-name but resolves only
   # within the CR's own namespace, and the folder lives in `monitoring`.
+  #
+  # One dashboard, not one per environment: the `namespace` template
+  # variable in typst-d2-mcp-overview.json filters between prod and test.
+  # Splitting would double the JSON, guarantee drift, and lose the
+  # mid-incident comparison ("does test show it too?").
+  # dlouwers/experiments#290 settled this.
   folderUID: "applications"
   resyncPeriod: 5m
   configMapRef:

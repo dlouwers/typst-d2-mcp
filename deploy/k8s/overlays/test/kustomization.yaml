@@ -15,11 +15,13 @@ kind: Kustomization
 namespace: typst-d2-mcp-test
 resources:
   - ../../base
-  # Single-instance Grafana dashboard slice — included by test only
-  # so the GrafanaDashboard CR ships exactly once (avoids a uid
-  # collision with prod). The dashboard renders both namespaces side
-  # by side via the namespace template variable, so one CR is correct.
-  - ../../dashboard
+  # NO ../../dashboard here. "Ship the CR exactly once" was right; shipping
+  # it from *test* was not. The dashboard covers prod as much as test — the
+  # `namespace` template variable is what selects between them — so hanging
+  # its lifecycle off this overlay meant suspending or decommissioning test
+  # took production's dashboard with it, and left the CR sitting in
+  # `typst-d2-mcp-test`, which reads as "prod has no dashboard".
+  # It moved to overlays/prod/ (dlouwers/experiments#290).
   - sealed-secret.yaml
   # - sealed-ghcr-pull.yaml
 patches:
