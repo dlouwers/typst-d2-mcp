@@ -9,12 +9,31 @@ kind: Kustomization
 resources:
   - grafanadashboard.yaml
 
-# configMapGenerator computes a hash suffix on the generated CM's name
-# so a dashboard JSON change propagates as a NEW ConfigMap, the
-# GrafanaDashboard's configMapRef.name is updated to match, and the
-# operator notices and reapplies. No in-place edits to the same
-# ConfigMap means no race with Grafana's UI changes.
+# disableNameSuffixHash is REQUIRED here, and its absence is why this
+# dashboard never once rendered between 2026-05-19 and now.
+#
+# The comment that used to sit here claimed kustomize rewrites the
+# GrafanaDashboard's configMapRef.name to match the hashed ConfigMap
+# name. It does not: kustomize only rewrites name references it knows
+# about, and GrafanaDashboard is a CRD absent from its nameReference
+# schema. So kustomize emitted `typst-d2-mcp-dashboard-c4bfhb2gmf`
+# while the CR kept asking for `typst-d2-mcp-dashboard`, and the CR sat
+# in the cluster for two and a half months with
+#
+#   status.conditions[InvalidSpec]:
+#     failed to fetch contents: configmaps "typst-d2-mcp-dashboard" not found
+#
+# — no event, no alert, just no dashboard. Turning the hash off makes
+# the generated name match the reference. The trade-off the old comment
+# was reaching for (a new ConfigMap name per JSON change, so the
+# operator is guaranteed to notice) is not needed: the operator re-reads
+# the ConfigMap every resyncPeriod, which is 5m here.
+#
+# investor-buddy hit exactly this and fixed it the same way; the pattern
+# is now documented in dlouwers/experiments `apps/README-metrics.md`.
 configMapGenerator:
   - name: typst-d2-mcp-dashboard
     files:
       - dashboards/typst-d2-mcp-overview.json
+    options:
+      disableNameSuffixHash: true
