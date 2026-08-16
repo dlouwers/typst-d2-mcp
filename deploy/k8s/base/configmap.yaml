@@ -20,5 +20,10 @@ data:
   TYPST_D2_MCP_QUOTA_PER_DAY: "1"
   TYPST_D2_MCP_COMPILE_TIMEOUT: "30s"
   TYPST_D2_MCP_MAX_INPUT_BYTES: "1048576"
+  # Workspaces are scratch space: a week is far longer than any PDF link
+  # TTL, so nothing in flight is at risk, and it bounds the 2Gi PVC.
+  # "0" would disable the file purge (sizes are still measured).
+  TYPST_D2_MCP_WORKSPACE_TTL: "168h"
+  TYPST_D2_MCP_SWEEP_INTERVAL: "1h"
   TYPST_D2_MCP_LOG_FORMAT: "json"
   TYPST_D2_MCP_LOG_LEVEL: "info"

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -22,6 +21,7 @@ import (
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 	"github.com/dlouwers/typst-d2-mcp/internal/metrics"
 	"github.com/dlouwers/typst-d2-mcp/internal/preprocessor"
+	"github.com/dlouwers/typst-d2-mcp/internal/sweeper"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -57,8 +57,17 @@ const (
 	envMetricsBearer = "TYPST_D2_MCP_METRICS_BEARER"
 	envPDFLinkTTL    = "TYPST_D2_MCP_PDF_LINK_TTL"
 
+	envWorkspaceTTL  = "TYPST_D2_MCP_WORKSPACE_TTL"
+	envSweepInterval = "TYPST_D2_MCP_SWEEP_INTERVAL"
+
 	defaultMetricsAddr = ":9090"
 	defaultPDFLinkTTL  = time.Hour
+
+	// A week is comfortably longer than any PDF link TTL, so nothing in
+	// flight is ever at risk, while still bounding the data volume.
+	// Workspaces are scratch space: their contents are reproducible.
+	defaultWorkspaceTTL  = 168 * time.Hour
+	defaultSweepInterval = time.Hour
 
 	defaultAddr           = ":8080"
 	defaultPath           = "/mcp"
@@ -100,6 +109,24 @@ func quotaPerDay() int {
 // URL leaks via chat history, server logs, etc.
 func pdfLinkTTL() time.Duration {
 	return durationEnv(envPDFLinkTTL, defaultPDFLinkTTL)
+}
+
+// workspaceTTL is how long a workspace file survives after its last
+// modification. Zero disables the purge; sizes are still measured, so
+// the admin UI's storage column keeps working with purging off.
+func workspaceTTL() time.Duration {
+	return durationEnv(envWorkspaceTTL, defaultWorkspaceTTL)
+}
+
+// sweepInterval is the gap between garbage-collection passes.
+func sweepInterval() time.Duration {
+	d := durationEnv(envSweepInterval, defaultSweepInterval)
+	if d <= 0 {
+		slog.Warn("sweep interval must be positive, using default",
+			"env", envSweepInterval, "default", defaultSweepInterval.String())
+		return defaultSweepInterval
+	}
+	return d
 }
 
 func durationEnv(key string, def time.Duration) time.Duration {
@@ -450,11 +477,37 @@ func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers, factor
 		// the monitoring namespace only.
 		startMetricsListener()
 
+		// Garbage collection needs the database (expired links) and, for
+		// the file purge, a server-owned workspace root. AUTH=none has
+		// no store, and LocalFactory deployments do not own the
+		// filesystem, so both are skipped rather than guessed at.
+		if store != nil {
+			startSweeper(store, factory)
+		}
+
 		slog.Info("listening", "addr", addr, "path", path)
 		return http.ListenAndServe(addr, mux) //nolint:gosec // intentional plain HTTP; TLS is terminated upstream.
 	default:
 		return fmt.Errorf("unknown %s=%q (expected stdio or http)", envTransport, transport)
 	}
+}
+
+// startSweeper launches periodic garbage collection in the background:
+// expired pdf_links rows always, plus aged-out workspace files and
+// per-user size measurement when the server owns a tenant workspace
+// root. Only TenantFactory has a root to sweep — LocalFS resolves to
+// paths the client owns, which are not ours to delete.
+func startSweeper(store *authdb.Store, factory workspace.Factory) {
+	var root string
+	if tf, ok := factory.(workspace.TenantFactory); ok {
+		root = tf.Root
+	}
+	sw := sweeper.New(store, sweeper.Config{
+		Root:     root,
+		FileTTL:  workspaceTTL(),
+		Interval: sweepInterval(),
+	})
+	go sw.Run(context.Background())
 }
 
 // startMetricsListener serves Prometheus metrics on a separate port
@@ -812,12 +865,25 @@ func handlePDFDownload(factory workspace.Factory, store *authdb.Store) http.Hand
 			return
 		}
 		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultFail).Inc()
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		name := filepath.Base(link.FilePath)
 		w.Header().Set("Content-Type", "application/pdf")
-		w.Header().Set("Content-Disposition",
-			fmt.Sprintf(`inline; filename=%q`, filepath.Base(link.FilePath)))
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename=%q`, name))
 		w.Header().Set("Cache-Control", "private, max-age=300")
+		// ServeContent honours a caller-set ETag but never invents one,
+		// and a compiled PDF is fully described by (mtime, size) — a
+		// recompile changes both. With it set, conditional GETs and
+		// Range requests are handled for us.
+		w.Header().Set("ETag", fmt.Sprintf(`"%x-%x"`, info.ModTime().UnixNano(), info.Size()))
 		metrics.PDFDownloadTotal.WithLabelValues(metrics.ResultOK).Inc()
-		_, _ = io.Copy(w, f)
+		// Replaces io.Copy: gives Range (resumable downloads) and
+		// If-None-Match / If-Modified-Since handling.
+		http.ServeContent(w, r, name, info.ModTime(), f)
 	})
 }
 
