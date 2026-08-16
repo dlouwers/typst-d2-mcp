@@ -52,19 +52,64 @@ type GitHubConfig struct {
 	// AllowedLogins, when non-empty, restricts the server to the
 	// listed GitHub logins (case-insensitive). Any other account is
 	// turned away both at OAuth callback time and on every /mcp
-	// request. Empty means open to any GitHub account — the public
-	// free-tier posture. Used to lock the test environment to the
-	// operator only.
+	// request. Used to lock the test environment to the operator only,
+	// and as the bootstrap allowlist before any invite exists.
 	AllowedLogins map[string]bool
+
+	// AdminLogins may reach the /admin UI. They are also implicitly
+	// allowed to use the server: an operator locked out of their own
+	// deployment by an empty invites table would have no way back in.
+	AdminLogins map[string]bool
 }
 
-// loginAllowed reports whether the GitHub login may use this server.
-// An empty AllowedLogins set means "no restriction".
-func (c GitHubConfig) loginAllowed(login string) bool {
-	if len(c.AllowedLogins) == 0 {
+// IsAdmin reports whether a GitHub login administers this server.
+func (c GitHubConfig) IsAdmin(login string) bool {
+	return c.AdminLogins[strings.ToLower(strings.TrimSpace(login))]
+}
+
+// InviteOnly reports whether this deployment restricts access, as
+// opposed to accepting any GitHub account.
+//
+// The posture follows *configuration*, never the contents of the
+// invites table. Deriving it from the data instead — "restricted once
+// somebody has been invited" — looks tidy and is a trapdoor: revoking
+// the last invite would empty the table and silently reopen the server
+// to the entire world, which is the opposite of what the admin
+// pressing "revoke" intended.
+//
+// So: naming an allowlist or an administrator is the act that closes
+// the server. A deployment that does neither keeps the open,
+// pre-invites behaviour.
+func (g *GitHub) InviteOnly() bool {
+	return len(g.Cfg.AllowedLogins) > 0 || len(g.Cfg.AdminLogins) > 0
+}
+
+// loginAllowed reports whether a GitHub login may use this server.
+//
+// Sources, in order: admins are always allowed, so an operator cannot
+// lock themselves out; the env allowlist is the bootstrap; database
+// invites are the runtime allowlist the admin UI edits.
+func (g *GitHub) loginAllowed(ctx context.Context, login string) bool {
+	l := strings.ToLower(strings.TrimSpace(login))
+	if g.Cfg.IsAdmin(l) {
 		return true
 	}
-	return c.AllowedLogins[strings.ToLower(strings.TrimSpace(login))]
+	if g.Cfg.AllowedLogins[l] {
+		return true
+	}
+	if g.Store != nil {
+		invited, err := g.Store.IsInvited(ctx, l)
+		if err != nil {
+			// Fail closed on a database error rather than admitting
+			// everyone: the allowlist is a security boundary.
+			slog.Error("invite lookup failed; denying", "login", l, "err", err)
+			return false
+		}
+		if invited {
+			return true
+		}
+	}
+	return !g.InviteOnly()
 }
 
 func (c GitHubConfig) authorizeURL() string {
@@ -117,7 +162,7 @@ func (g *GitHub) IdentifyFromRequest(r *http.Request) (identity.Identity, error)
 	}
 	// Allowlist is authoritative on every request — a token minted
 	// before the allowlist was tightened stops working at once.
-	if !g.Cfg.loginAllowed(id.GitHubLogin) {
+	if !g.loginAllowed(r.Context(), id.GitHubLogin) {
 		return identity.Identity{}, ErrNotAllowlisted
 	}
 	return id, nil
@@ -166,7 +211,7 @@ func (g *GitHub) ServeCallback(w http.ResponseWriter, r *http.Request) {
 	// OAuth access_denied — they never get a token. The check is
 	// repeated on every request in IdentifyFromRequest, so this is
 	// the friendly early gate rather than the authoritative one.
-	if !g.Cfg.loginAllowed(gu.Login) {
+	if !g.loginAllowed(r.Context(), gu.Login) {
 		slog.Warn("oauth login rejected: not allowlisted", "login", gu.Login, "github_id", gu.ID)
 		redirectOAuthError(w, r, session.RedirectURI, session.ClientState,
 			"access_denied", "this GitHub account is not authorised for this server")
@@ -210,6 +255,43 @@ func (g *GitHub) ServeCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	u.RawQuery = q.Encode()
 	http.Redirect(w, r, u.String(), http.StatusFound)
+}
+
+// User is a GitHub account as this server cares about it.
+type User struct {
+	ID    int64
+	Login string
+	Email string
+}
+
+// AuthCodeURL builds the GitHub authorize URL to send a browser to,
+// carrying state for the caller to verify on the way back. Used by the
+// admin UI's browser login, which shares this server's GitHub OAuth app
+// (and therefore its single registered callback URL) with the MCP
+// authorization-server flow.
+func (g *GitHub) AuthCodeURL(state string) string {
+	q := url.Values{}
+	q.Set("client_id", g.Cfg.ClientID)
+	q.Set("redirect_uri", g.Cfg.redirectURL())
+	q.Set("scope", "read:user user:email")
+	q.Set("state", state)
+	return g.Cfg.authorizeURL() + "?" + q.Encode()
+}
+
+// ExchangeCodeForUser completes the GitHub half of an OAuth round trip:
+// swap the code for a token, then read the account behind it. Exposed
+// for the admin browser login; the MCP authorization-server flow drives
+// the same steps through ServeCallback.
+func (g *GitHub) ExchangeCodeForUser(ctx context.Context, code string) (User, error) {
+	token, err := g.exchangeCode(ctx, code)
+	if err != nil {
+		return User{}, fmt.Errorf("exchange code: %w", err)
+	}
+	gu, err := g.fetchUser(ctx, token)
+	if err != nil {
+		return User{}, fmt.Errorf("fetch user: %w", err)
+	}
+	return User{ID: gu.ID, Login: gu.Login, Email: gu.Email}, nil
 }
 
 func bearerToken(r *http.Request) string {
@@ -290,4 +372,3 @@ func (g *GitHub) fetchUser(ctx context.Context, ghToken string) (githubUser, err
 	}
 	return u, nil
 }
-

@@ -22,6 +22,7 @@ import (
 	"github.com/dlouwers/typst-d2-mcp/internal/metrics"
 	"github.com/dlouwers/typst-d2-mcp/internal/preprocessor"
 	"github.com/dlouwers/typst-d2-mcp/internal/sweeper"
+	"github.com/dlouwers/typst-d2-mcp/internal/web"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -43,15 +44,17 @@ const (
 	envCompileTimeout = "TYPST_D2_MCP_COMPILE_TIMEOUT"
 	envMaxInputBytes  = "TYPST_D2_MCP_MAX_INPUT_BYTES"
 
-	envAuth         = "TYPST_D2_MCP_AUTH"
-	envDB           = "TYPST_D2_MCP_DB"
-	envPublicURL    = "TYPST_D2_MCP_PUBLIC_URL"
+	envAuth            = "TYPST_D2_MCP_AUTH"
+	envDB              = "TYPST_D2_MCP_DB"
+	envPublicURL       = "TYPST_D2_MCP_PUBLIC_URL"
 	envGitHubID        = "TYPST_D2_MCP_GITHUB_CLIENT_ID"
 	envGitHubSecret    = "TYPST_D2_MCP_GITHUB_CLIENT_SECRET"
 	envGitHubAllowlist = "TYPST_D2_MCP_GITHUB_ALLOWLIST"
-	envQuotaPerDay  = "TYPST_D2_MCP_QUOTA_PER_DAY"
-	envLogLevel     = "TYPST_D2_MCP_LOG_LEVEL"
-	envLogFormat    = "TYPST_D2_MCP_LOG_FORMAT"
+	envAdmins          = "TYPST_D2_MCP_ADMINS"
+	envSessionKey      = "TYPST_D2_MCP_SESSION_KEY"
+	envQuotaPerDay     = "TYPST_D2_MCP_QUOTA_PER_DAY"
+	envLogLevel        = "TYPST_D2_MCP_LOG_LEVEL"
+	envLogFormat       = "TYPST_D2_MCP_LOG_FORMAT"
 
 	envMetricsAddr   = "TYPST_D2_MCP_METRICS_ADDR"
 	envMetricsBearer = "TYPST_D2_MCP_METRICS_BEARER"
@@ -254,6 +257,7 @@ func main() {
 	slog.Info("starting",
 		"version", serverVersion,
 		"auth", backend.Name(),
+		"admins", len(parseAllowlist(os.Getenv(envAdmins))),
 		"quota_per_day", quotaPerDay(),
 		"compile_timeout", compileTimeout().String(),
 		"max_input_bytes", maxInputBytes(),
@@ -303,12 +307,15 @@ func initLogger() {
 // the GitHub round-trip and the MCP-spec OAuth Authorization Server
 // (RFC 6749 + 7591 + 7636 + 8414 + 9728) handlers.
 type gitHubHandlers struct {
-	githubCallback          http.HandlerFunc
-	wellKnownResource       http.HandlerFunc
-	wellKnownAuthServer     http.HandlerFunc
-	register                http.HandlerFunc
-	authorize               http.HandlerFunc
-	token                   http.HandlerFunc
+	// backend is the same *auth.GitHub the handlers below hang off,
+	// kept so the admin UI can drive its browser login through it.
+	backend             *auth.GitHub
+	githubCallback      http.HandlerFunc
+	wellKnownResource   http.HandlerFunc
+	wellKnownAuthServer http.HandlerFunc
+	register            http.HandlerFunc
+	authorize           http.HandlerFunc
+	token               http.HandlerFunc
 }
 
 // selectFactory picks the workspace.Factory used to mint per-request
@@ -375,11 +382,13 @@ func selectAuth() (auth.Backend, *gitHubHandlers, *authdb.Store, func(), error) 
 				ClientSecret:  clientSecret,
 				PublicURL:     publicURL,
 				AllowedLogins: parseAllowlist(os.Getenv(envGitHubAllowlist)),
+				AdminLogins:   parseAllowlist(os.Getenv(envAdmins)),
 			},
 			Store: store,
 		}
 		closer := func() { _ = store.Close() }
 		return gh, &gitHubHandlers{
+			backend:             gh,
 			githubCallback:      gh.ServeCallback,
 			wellKnownResource:   gh.ServeWellKnownProtectedResource,
 			wellKnownAuthServer: gh.ServeWellKnownAuthorizationServer,
@@ -468,7 +477,25 @@ func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers, factor
 			mux.HandleFunc("/register", gh.register)
 			mux.HandleFunc("/authorize", gh.authorize)
 			mux.HandleFunc("/token", gh.token)
-			mux.HandleFunc("/auth/github/callback", gh.githubCallback)
+
+			admin, err := newAdminUI(gh.backend, store, factory)
+			if err != nil {
+				return fmt.Errorf("admin ui: %w", err)
+			}
+			mux.Handle("/admin/", admin.Handler())
+
+			// One GitHub OAuth app means one registered callback URL,
+			// shared by the MCP authorization-server flow and the admin
+			// browser login. The `state` parameter tells them apart:
+			// admin logins carry web.StatePrefix, MCP authorizations
+			// carry an authorize-session id.
+			mux.HandleFunc("/auth/github/callback", func(w http.ResponseWriter, r *http.Request) {
+				if web.IsAdminState(r.URL.Query().Get("state")) {
+					admin.CompleteLogin(w, r)
+					return
+				}
+				gh.githubCallback(w, r)
+			})
 		}
 
 		// /metrics binds to a separate listener so it never shares
@@ -490,6 +517,56 @@ func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers, factor
 	default:
 		return fmt.Errorf("unknown %s=%q (expected stdio or http)", envTransport, transport)
 	}
+}
+
+// newAdminUI builds the /admin server. The session signing key comes
+// from the environment; without one we generate a random key and warn,
+// which works but logs every admin out on restart.
+func newAdminUI(gh *auth.GitHub, store *authdb.Store, factory workspace.Factory) (*web.Server, error) {
+	key := []byte(os.Getenv(envSessionKey))
+	if len(key) == 0 {
+		generated, err := web.RandomKey()
+		if err != nil {
+			return nil, err
+		}
+		key = generated
+		slog.Warn("no admin session key configured; sessions will not survive a restart",
+			"env", envSessionKey)
+	}
+
+	var root string
+	if tf, ok := factory.(workspace.TenantFactory); ok {
+		root = tf.Root
+	}
+	// Secure cookies are dropped by browsers over plain http, which
+	// would make local development impossible to sign in to. Follow the
+	// deployment's own public URL rather than guessing.
+	secure := strings.HasPrefix(strings.ToLower(gh.Cfg.PublicURL), "https://")
+	if !secure {
+		slog.Warn("admin session cookies will not be marked Secure",
+			"public_url", gh.Cfg.PublicURL)
+	}
+
+	// Naming an administrator (or an allowlist) is what closes the
+	// server to uninvited accounts. Say so plainly at startup: turning
+	// this on is how an open deployment becomes invite-only, and
+	// existing users who were relying on the open posture will be
+	// denied until they are invited.
+	if len(gh.Cfg.AdminLogins) == 0 {
+		slog.Warn("no administrators configured; /admin is unreachable", "env", envAdmins)
+	} else {
+		slog.Info("admin ui enabled",
+			"admins", len(gh.Cfg.AdminLogins),
+			"invite_only", gh.InviteOnly())
+	}
+
+	return web.New(web.Config{
+		Store:         store,
+		GitHub:        gh,
+		Sessions:      web.NewSessionCodec(key, 12*time.Hour, secure),
+		WorkspaceRoot: root,
+		QuotaDefault:  quotaPerDay,
+	})
 }
 
 // startSweeper launches periodic garbage collection in the background:
@@ -573,7 +650,6 @@ func resolverFor(ctx context.Context, factory workspace.Factory) (workspace.Reso
 	return r, nil
 }
 
-
 func registerTools(s *server.MCPServer, factory workspace.Factory, store *authdb.Store) {
 	// The bulk of the layout strategy lives in server instructions above so
 	// it isn't re-sent on every tool call. The description below carries
@@ -654,15 +730,24 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		id, _ := identity.FromContext(ctx)
 		log := slog.With("user", id.UserID, "file_path", filePath)
 		if store != nil && !id.IsAnonymous() {
-			limit := quotaPerDay()
+			// A per-user override wins over the deployment default; an
+			// admin can raise one person or exempt them entirely
+			// (override 0) without moving the ceiling for everyone.
+			limit, err := store.EffectiveQuota(ctx, id.UserID, quotaPerDay())
+			if err != nil {
+				// EffectiveQuota already fell back to the default; the
+				// compile proceeds rather than failing on a read error.
+				log.Warn("quota override lookup failed; using default", "err", err)
+			}
 			today := time.Now().UTC().Format("2006-01-02")
 			if err := store.IncrementCompile(ctx, id.UserID, today, limit); err != nil {
 				if errors.Is(err, authdb.ErrQuotaExceeded) {
 					metrics.CompileTotal.WithLabelValues(metrics.ResultQuotaExceeded).Inc()
 					log.Warn("quota exceeded", "limit", limit)
 					return mcp.NewToolResultError(fmt.Sprintf(
-						"quota exceeded: %d compile(s) per UTC day per user (resets at 00:00 UTC; set %s to raise)",
-						limit, envQuotaPerDay,
+						"quota exceeded: %d compile(s) per UTC day per user (resets at 00:00 UTC; "+
+							"ask an administrator to raise your quota)",
+						limit,
 					)), nil
 				}
 				metrics.CompileTotal.WithLabelValues(metrics.ResultFail).Inc()

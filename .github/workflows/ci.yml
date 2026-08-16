@@ -33,6 +33,30 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      # The Stormlantern assets under internal/web/static/vendor/ are
+      # committed so the image build stays toolchain-free. This catches a
+      # forgotten re-sync after the design system changes. Inert until a
+      # DESIGN_SYSTEM_TOKEN secret exists with read access to that repo.
+      - name: Check out design system
+        if: env.DS_TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          repository: dlouwers/stormlantern-design-system
+          token: ${{ env.DS_TOKEN }}
+          path: .design-system
+        env:
+          DS_TOKEN: ${{ secrets.DESIGN_SYSTEM_TOKEN }}
+
+      - name: Check vendored assets are in sync
+        if: env.DS_TOKEN != ''
+        env:
+          DS_TOKEN: ${{ secrets.DESIGN_SYSTEM_TOKEN }}
+          STORMLANTERN_DS: .design-system
+        run: |
+          ./scripts/sync-vendor.sh
+          git diff --exit-code -- internal/web/static/vendor \
+            || { echo "::error::vendored design-system assets are stale; run scripts/sync-vendor.sh"; exit 1; }
+
       - name: Run go vet
         run: go vet ./...
 

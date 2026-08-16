@@ -1,0 +1,28 @@
+{{define "content"}}
+<sl-card padding="lg">
+  <h1 slot="header">Audit log</h1>
+  <p class="muted">Every administrative action, newest first. Written in the
+  same transaction as the change it records.</p>
+</sl-card>
+
+<sl-table density="compact" zebra>
+  <table>
+    <thead>
+      <tr><th>When</th><th>Admin</th><th>Action</th><th>Target</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+    {{range .Entries}}
+      <tr>
+        <td>{{.CreatedAt.Format "2006-01-02 15:04"}} UTC</td>
+        <td>{{.ActorLogin}}</td>
+        <td><code>{{.Action}}</code></td>
+        <td>{{.TargetLogin}}</td>
+        <td class="muted">{{.Detail}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="5" class="muted">No administrative actions recorded yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</sl-table>
+{{end}}

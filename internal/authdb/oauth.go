@@ -36,18 +36,18 @@ import (
 // design — an OAuth dance that takes longer than these is almost
 // certainly an attacker or a hung browser, not a legitimate user.
 const (
-	AuthorizeSessionTTL = 10 * time.Minute
+	AuthorizeSessionTTL  = 10 * time.Minute
 	AuthorizationCodeTTL = 60 * time.Second
 )
 
 // Errors callers should be able to distinguish in tests and at the
 // handler boundary.
 var (
-	ErrUnknownClient        = errors.New("unknown oauth client")
-	ErrSessionNotFound      = errors.New("authorize session not found or expired")
-	ErrAuthorizationCode    = errors.New("authorization code not found, expired, or already used")
-	ErrPKCEMismatch         = errors.New("pkce verifier does not match challenge")
-	ErrPDFLinkNotFound      = errors.New("pdf download link not found or expired")
+	ErrUnknownClient     = errors.New("unknown oauth client")
+	ErrSessionNotFound   = errors.New("authorize session not found or expired")
+	ErrAuthorizationCode = errors.New("authorization code not found, expired, or already used")
+	ErrPKCEMismatch      = errors.New("pkce verifier does not match challenge")
+	ErrPDFLinkNotFound   = errors.New("pdf download link not found or expired")
 )
 
 // OAuthClient is the public-facing shape of a registered MCP client.

@@ -53,7 +53,9 @@ The OAuth scope requested is `read:user user:email` — read-only.
 | `TYPST_D2_MCP_PUBLIC_URL` | _required for github_ | Externally reachable base URL (scheme + host). |
 | `TYPST_D2_MCP_GITHUB_CLIENT_ID` | _required for github_ | OAuth Client ID. |
 | `TYPST_D2_MCP_GITHUB_CLIENT_SECRET` | _required for github_ | OAuth Client secret. |
-| `TYPST_D2_MCP_QUOTA_PER_DAY` | `1` | Compiles per UTC day per non-anonymous user. `0` disables. |
+| `TYPST_D2_MCP_QUOTA_PER_DAY` | `1` | Default compiles per UTC day per non-anonymous user. `0` disables. A per-user override set in the admin UI wins. |
+| `TYPST_D2_MCP_ADMINS` | (empty) | Comma-separated GitHub logins that may use `/admin`. **Setting this makes the server invite-only** — see below. |
+| `TYPST_D2_MCP_SESSION_KEY` | (generated) | Signing key for admin browser sessions. Unset means a random key per process, so every restart signs admins out. |
 | `TYPST_D2_MCP_COMPILE_TIMEOUT` | `30s` | Per-compile budget (parses Go duration strings). `0` defers to caller. |
 | `TYPST_D2_MCP_WORKSPACE_TTL` | `168h` (7d) | Age after which workspace files are purged. `0` disables the purge; sizes are still measured. |
 | `TYPST_D2_MCP_SWEEP_INTERVAL` | `1h` | Gap between garbage-collection passes. |
@@ -116,6 +118,52 @@ link sweeping and size measurement still run.
 
 Both paths are derived from env vars at startup; override them if you
 prefer a different layout.
+
+## Admin UI
+
+Set `TYPST_D2_MCP_ADMINS` to a comma-separated list of GitHub logins and
+those accounts can sign in at `/admin` to invite users, set per-user
+quota, revoke access and API keys, delete users, and read an audit log.
+It is served on the main listener, so it inherits the existing ingress
+and TLS.
+
+**Access posture.** Naming an administrator — or a
+`TYPST_D2_MCP_GITHUB_ALLOWLIST` — is what closes the server: from then
+on only admins, allowlisted logins, and invited logins may use it. A
+deployment with neither set stays open to any GitHub account, which is
+the behaviour from before invites existed.
+
+This follows configuration, never the contents of the invites table. If
+the posture were derived from the data, revoking the last invite would
+empty the table and silently reopen the server to everyone — the
+opposite of what revoking is for.
+
+Two consequences worth planning for:
+
+- Turning `TYPST_D2_MCP_ADMINS` on for a previously open deployment
+  denies every existing user until they are invited. Invite them first,
+  or expect support requests.
+- An admin login is always allowed, invited or not, so an empty invites
+  table can never lock the operator out of their own server.
+
+**Sessions.** Admins log in through the same GitHub OAuth app as the MCP
+flow (the two are told apart by the OAuth `state`), and get a signed
+cookie: `HttpOnly`, `Secure` when `TYPST_D2_MCP_PUBLIC_URL` is https,
+and `SameSite=Lax`. Lax is the CSRF defence — browsers do not attach it
+to cross-site POSTs. Set `TYPST_D2_MCP_SESSION_KEY` to a long random
+string so sessions survive restarts.
+
+**Invites** grant access, nothing more: there is no email, no SMTP
+config. Send the person your server URL and they sign in with GitHub.
+
+**Quota** is per user: unset inherits `TYPST_D2_MCP_QUOTA_PER_DAY`, `0`
+means unlimited, and any other number caps that user. "Reset today's
+counter" clears the current day without changing the quota.
+
+**Front-end assets** (design system + htmx) are vendored under
+`internal/web/static/vendor/` and embedded in the binary, so no CDN is
+contacted and the image build needs no npm registry auth. Re-sync them
+with `scripts/sync-vendor.sh` after the design system changes.
 
 ### Schema migrations
 

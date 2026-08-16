@@ -1,0 +1,110 @@
+{{/*
+  The users table lives here rather than in the page template so that
+  both the full page render and the htmx action responses can emit it
+  from their own template sets.
+
+  Note which elements are which: sl-table, sl-badge and sl-alert are
+  display-only wrappers, so with JavaScript off they render as unknown
+  elements and their contents still show. Form controls are deliberately
+  native <input>/<button> rather than sl-input/sl-button — those are
+  form-associated custom elements that submit via ElementInternals, which
+  needs JavaScript. Native controls keep every action working when it is
+  unavailable.
+*/}}
+{{define "users-table"}}
+<sl-table id="users" density="compact" zebra>
+  <table>
+    <thead>
+      <tr>
+        <th>Login</th>
+        <th>State</th>
+        <th class="num">Today</th>
+        <th>Quota</th>
+        <th>Key</th>
+        <th class="num">Storage</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Rows}}
+      <tr>
+        <td>
+          <strong>{{.GitHubLogin}}</strong>
+          {{if .Email}}<div class="muted">{{.Email}}</div>{{end}}
+        </td>
+        <td>
+          {{if .SignedIn}}<sl-badge variant="ok">active</sl-badge>
+          {{else}}<sl-badge variant="warn">invited</sl-badge>{{end}}
+          {{if and .Invited .InvitedBy}}<div class="muted">by {{.InvitedBy}}</div>{{end}}
+        </td>
+        <td class="num">{{if .SignedIn}}{{.UsedToday}}{{else}}—{{end}}</td>
+        <td>{{quotaLabel .QuotaOverride $.DefaultQuota}}</td>
+        <td>
+          {{if gt .KeyCount 0}}
+            <sl-badge variant="info">{{.KeyCount}}</sl-badge>
+            <div class="muted">used {{agoLabel .LastUsedAt}}</div>
+          {{else}}
+            <span class="muted">none</span>
+          {{end}}
+        </td>
+        <td class="num">
+          {{bytesLabel .StorageBytes}}
+          {{if .StorageMeasAt}}<div class="muted">{{agoLabel .StorageMeasAt}}</div>{{end}}
+        </td>
+        <td class="actions">
+          <details>
+            <summary>Manage</summary>
+            <div class="panel">
+
+              {{if .SignedIn}}
+              <form method="post" action="/admin/quota" hx-post="/admin/quota" hx-target="#users" hx-swap="outerHTML">
+                <input type="hidden" name="login" value="{{.GitHubLogin}}">
+                <fieldset>
+                  <legend>Quota</legend>
+                  <label><input type="radio" name="mode" value="default" {{if not .QuotaOverride}}checked{{end}}> Default</label>
+                  <label><input type="radio" name="mode" value="unlimited" {{if and .QuotaOverride (eq (deref .QuotaOverride) 0)}}checked{{end}}> Unlimited</label>
+                  <label><input type="radio" name="mode" value="fixed"> Fixed
+                    <input type="number" name="value" min="1" placeholder="10" value="{{quotaValue .QuotaOverride}}" class="narrow">
+                  </label>
+                  <button type="submit" class="btn btn-primary btn-sm">Save quota</button>
+                </fieldset>
+              </form>
+
+              <form method="post" action="/admin/reset" hx-post="/admin/reset" hx-target="#users" hx-swap="outerHTML">
+                <input type="hidden" name="login" value="{{.GitHubLogin}}">
+                <input type="hidden" name="user_id" value="{{.UserID}}">
+                <button type="submit" class="btn btn-sm">Reset today's counter</button>
+              </form>
+
+              <form method="post" action="/admin/revoke-keys" hx-post="/admin/revoke-keys" hx-target="#users" hx-swap="outerHTML">
+                <input type="hidden" name="login" value="{{.GitHubLogin}}">
+                <button type="submit" class="btn btn-sm">Revoke API keys</button>
+              </form>
+              {{end}}
+
+              {{if .Invited}}
+              <form method="post" action="/admin/revoke" hx-post="/admin/revoke" hx-target="#users" hx-swap="outerHTML">
+                <input type="hidden" name="login" value="{{.GitHubLogin}}">
+                <button type="submit" class="btn btn-sm">Revoke access</button>
+              </form>
+              {{end}}
+
+              <form method="post" action="/admin/delete" hx-post="/admin/delete" hx-target="#users" hx-swap="outerHTML" class="danger">
+                <input type="hidden" name="login" value="{{.GitHubLogin}}">
+                <label>Type <code>{{.GitHubLogin}}</code> to confirm deletion
+                  <input type="text" name="confirm" autocomplete="off" placeholder="{{.GitHubLogin}}">
+                </label>
+                <button type="submit" class="btn btn-danger btn-sm">Delete user and all data</button>
+              </form>
+
+            </div>
+          </details>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7" class="muted">Nobody yet. Invite someone above.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</sl-table>
+{{end}}
