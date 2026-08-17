@@ -291,7 +291,9 @@ func (g *GitHub) ExchangeCodeForUser(ctx context.Context, code string) (User, er
 	if err != nil {
 		return User{}, fmt.Errorf("fetch user: %w", err)
 	}
-	return User{ID: gu.ID, Login: gu.Login, Email: gu.Email}, nil
+	// githubUser and User carry the same fields; the former exists only
+	// to hold the JSON tags for decoding.
+	return User(gu), nil
 }
 
 func bearerToken(r *http.Request) string {
