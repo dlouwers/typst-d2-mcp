@@ -84,49 +84,9 @@ type AuthorizationCode struct {
 	Scope               string
 }
 
-func (s *Store) migrateOAuth() error {
-	const ddl = `
-CREATE TABLE IF NOT EXISTS oauth_clients (
-  client_id                  TEXT PRIMARY KEY,
-  client_name                TEXT NOT NULL,
-  redirect_uris              TEXT NOT NULL, -- JSON-encoded array
-  token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none',
-  created_at                 TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS oauth_authorize_sessions (
-  session_id            TEXT PRIMARY KEY,
-  client_id             TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
-  redirect_uri          TEXT NOT NULL,
-  code_challenge        TEXT NOT NULL,
-  code_challenge_method TEXT NOT NULL DEFAULT 'S256',
-  scope                 TEXT,
-  client_state          TEXT NOT NULL,
-  expires_at            TIMESTAMP NOT NULL
-);
-CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
-  code                  TEXT PRIMARY KEY,
-  user_id               INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  client_id             TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
-  redirect_uri          TEXT NOT NULL,
-  code_challenge        TEXT NOT NULL,
-  code_challenge_method TEXT NOT NULL DEFAULT 'S256',
-  scope                 TEXT,
-  used                  INTEGER NOT NULL DEFAULT 0,
-  expires_at            TIMESTAMP NOT NULL
-);
-CREATE TABLE IF NOT EXISTS pdf_links (
-  token       TEXT PRIMARY KEY,
-  user_id     TEXT NOT NULL,         -- identity.Identity.UserID (e.g. "gh:42")
-  file_path   TEXT NOT NULL,         -- workspace-relative path to the PDF
-  created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  expires_at  TIMESTAMP NOT NULL
-);
-`
-	if _, err := s.db.Exec(ddl); err != nil {
-		return fmt.Errorf("migrate oauth schema: %w", err)
-	}
-	return nil
-}
+// The oauth_clients, oauth_authorize_sessions, oauth_authorization_codes
+// and pdf_links tables are created by revision 1 in migrate.go, alongside
+// the rest of the schema.
 
 // RegisterClient persists a dynamic client registration and returns
 // the assigned client_id. Caller is responsible for validating the

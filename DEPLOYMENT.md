@@ -98,6 +98,34 @@ The state volume at `/var/lib/typst-d2-mcp` holds:
 Both paths are derived from env vars at startup; override them if you
 prefer a different layout.
 
+### Schema migrations
+
+`auth.sqlite` carries a schema revision, recorded in its
+`schema_migrations` table. On startup the server applies any revisions
+the binary knows about and the database has not yet seen, each one in a
+single transaction.
+
+Two failure modes are deliberate, and both stop the process rather than
+letting it serve against a schema it does not understand:
+
+- **A migration fails.** That revision rolls back, startup aborts, and
+  the error names the revision. The pod will crashloop — correct, given
+  the alternative is writing against a half-applied schema.
+- **The database is newer than the binary.** Rolling an image back onto
+  a volume a newer build has already migrated is refused, with both
+  revisions in the message. Roll forward, or restore a backup taken
+  before the upgrade.
+
+**Back up the state volume before upgrading to a release that carries a
+migration.** `api_keys` stores sha256 hashes only, so a botched
+migration cannot be repaired by re-deriving keys — every user would have
+to re-authenticate.
+
+To add a migration, append an entry to `migrations` in
+`internal/authdb/migrate.go` with the next revision number. Never edit a
+revision that has shipped: databases that already applied it will not
+re-run it, so an edit silently diverges old deployments from new ones.
+
 ## Hardening notes
 
 These are **not** wired into the image today. They belong to the

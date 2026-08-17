@@ -39,20 +39,18 @@ type Store struct {
 	db *sql.DB
 }
 
-// Open returns a Store backed by the SQLite file at path. The schema is
-// created in place if missing; opening an existing file is idempotent.
-// Foreign keys are enabled for referential integrity on api_keys.
+// Open returns a Store backed by the SQLite file at path, migrated to
+// the schema revision this binary expects (see migrate.go). Opening an
+// existing file is idempotent; a database newer than this binary is
+// refused with ErrSchemaTooNew rather than served against. Foreign keys
+// are enabled for referential integrity on api_keys.
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if err := s.migrateOAuth(); err != nil {
+	if err := s.runMigrations(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -61,36 +59,6 @@ func Open(path string) (*Store, error) {
 
 // Close releases the underlying SQLite connection.
 func (s *Store) Close() error { return s.db.Close() }
-
-func (s *Store) migrate() error {
-	const ddl = `
-CREATE TABLE IF NOT EXISTS users (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  github_id    INTEGER NOT NULL UNIQUE,
-  github_login TEXT    NOT NULL,
-  email        TEXT,
-  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS api_keys (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  key_hash     BLOB    NOT NULL UNIQUE,
-  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_used_at TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS compiles (
-  user_id  TEXT    NOT NULL,
-  utc_date TEXT    NOT NULL,
-  count    INTEGER NOT NULL,
-  PRIMARY KEY(user_id, utc_date)
-);
-`
-	_, err := s.db.Exec(ddl)
-	if err != nil {
-		return fmt.Errorf("migrate schema: %w", err)
-	}
-	return nil
-}
 
 // UpsertGitHubUser inserts or updates a user keyed by their GitHub
 // numeric ID and returns the local user.id. Login/email are refreshed
