@@ -260,7 +260,7 @@ func TestMigrations_FailureRollsBackAndAbortsOpen(t *testing.T) {
 		{revision: 1, name: "base", stmts: []string{`CREATE TABLE widgets (id INTEGER PRIMARY KEY)`}},
 		{revision: 2, name: "half broken", stmts: []string{
 			`CREATE TABLE gadgets (id INTEGER PRIMARY KEY)`, // valid, must be rolled back
-			`THIS IS NOT SQL`,                               // fails
+			`THIS IS NOT SQL`, // fails
 		}},
 	})
 

@@ -1,0 +1,37 @@
+{{define "base"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/admin/static/vendor/stormlantern-tokens.css">
+<link rel="stylesheet" href="/admin/static/app.css">
+<script src="/admin/static/vendor/htmx.min.js" defer></script>
+<script type="module" src="/admin/static/components.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/admin/">
+    <img src="/admin/static/vendor/lantern-mark.svg" alt="" width="28" height="28">
+    <span>typst-d2-mcp <strong>admin</strong></span>
+  </a>
+  <nav>
+    <a href="/admin/">Users</a>
+    <a href="/admin/audit">Audit</a>
+    {{if .Admin}}
+    <form method="post" action="/admin/logout" class="inline">
+      <span class="who">{{.Admin}}</span>
+      <button type="submit" class="btn btn-ghost btn-sm">Sign out</button>
+    </form>
+    {{end}}
+  </nav>
+</header>
+
+<main>
+  <div id="flash">{{template "flash" .}}</div>
+  {{block "content" .}}{{end}}
+</main>
+</body>
+</html>{{end}}
+
+{{define "flash"}}{{if .Flash}}<sl-alert variant="{{.FlashLevel}}">{{.Flash}}</sl-alert>{{end}}{{end}}

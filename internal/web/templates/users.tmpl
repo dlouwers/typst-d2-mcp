@@ -1,0 +1,19 @@
+{{define "content"}}
+<sl-card padding="lg">
+  <h1 slot="header">Users</h1>
+  <form method="post" action="/admin/invite" class="invite"
+        hx-post="/admin/invite" hx-target="#users" hx-swap="outerHTML">
+    <label for="invite-login">Invite a GitHub login</label>
+    <input id="invite-login" type="text" name="login" placeholder="octocat"
+           autocomplete="off" required>
+    <button type="submit" class="btn btn-primary">Invite</button>
+  </form>
+  <p class="muted">
+    An invite only grants access — there is no email. Send them
+    <code>{{.PublicURL}}</code> and they sign in with GitHub.
+    The default quota is <strong>{{quotaNumber .DefaultQuota}}</strong>.
+  </p>
+</sl-card>
+
+{{template "users-table" .}}
+{{end}}

@@ -1,0 +1,120 @@
+/* Admin UI layout. Colour, type and spacing all come from the
+   Stormlantern tokens; nothing here invents a value that a token
+   already defines. */
+
+body {
+  margin: 0;
+  background: var(--sl-color-paper);
+  color: var(--sl-color-ink);
+  font-family: var(--sl-font-family-body, ui-sans-serif, system-ui, sans-serif);
+  font-size: var(--sl-font-size-base);
+  line-height: var(--sl-font-line-height-base);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sl-space-4);
+  flex-wrap: wrap;
+  padding: var(--sl-space-3) var(--sl-space-5);
+  background: var(--sl-color-surface);
+  border-bottom: 1px solid var(--sl-color-line);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sl-space-2);
+  color: inherit;
+  text-decoration: none;
+  font-family: var(--sl-font-family-display, inherit);
+}
+.topbar nav { display: flex; align-items: center; gap: var(--sl-space-4); }
+.topbar nav a { color: var(--sl-color-ink); text-decoration: none; }
+.topbar nav a:hover { color: var(--sl-color-accent); }
+.who { color: var(--sl-color-muted); font-size: var(--sl-font-size-sm); }
+form.inline { display: inline-flex; align-items: center; gap: var(--sl-space-2); margin: 0; }
+
+main {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: var(--sl-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sl-space-5);
+}
+
+.muted { color: var(--sl-color-muted); font-size: var(--sl-font-size-sm); }
+code { font-family: var(--sl-font-family-mono, ui-monospace, monospace); }
+
+/* Native controls, styled with tokens. They are native rather than
+   sl-input / sl-button because those submit through ElementInternals,
+   which needs JavaScript; these keep every action working without it. */
+input[type="text"],
+input[type="number"] {
+  font: inherit;
+  color: var(--sl-color-ink);
+  background: var(--sl-color-paper);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-md);
+  padding: var(--sl-space-2) var(--sl-space-3);
+}
+input:focus-visible, .btn:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--sl-color-focus);
+  outline-offset: 2px;
+}
+input.narrow { width: 6rem; }
+
+.btn {
+  display: inline-block;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-md);
+  background: var(--sl-color-surface);
+  color: var(--sl-color-ink);
+  padding: var(--sl-space-2) var(--sl-space-3);
+  text-decoration: none;
+}
+.btn:hover { border-color: var(--sl-color-accent); }
+.btn-sm { font-size: var(--sl-font-size-sm); padding: var(--sl-space-1) var(--sl-space-2); }
+.btn-primary {
+  background: var(--sl-color-primary);
+  border-color: var(--sl-color-primary);
+  color: var(--sl-color-gray-0, #fff);
+}
+.btn-primary:hover { background: var(--sl-color-primary-hover); }
+.btn-ghost { background: transparent; border-color: transparent; }
+.btn-danger { border-color: var(--sl-color-loss); color: var(--sl-color-loss); }
+.btn-danger:hover { background: var(--sl-color-loss-tint); }
+
+.invite { display: flex; align-items: flex-end; gap: var(--sl-space-3); flex-wrap: wrap; }
+.invite label { display: block; font-size: var(--sl-font-size-sm); color: var(--sl-color-muted); }
+
+/* Per-row management uses <details> rather than a modal: it needs no
+   JavaScript, and the confirm field stays in the normal tab order. */
+td.actions details > summary { cursor: pointer; color: var(--sl-color-accent); }
+td.actions .panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sl-space-3);
+  padding: var(--sl-space-3);
+  margin-top: var(--sl-space-2);
+  background: var(--sl-color-surface);
+  border: 1px solid var(--sl-color-line);
+  border-radius: var(--sl-radius-md);
+  min-width: 20rem;
+}
+td.actions fieldset {
+  border: 0; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: var(--sl-space-1);
+}
+td.actions legend { font-size: var(--sl-font-size-sm); color: var(--sl-color-muted); padding: 0; }
+td.actions form.danger {
+  border-top: 1px solid var(--sl-color-line);
+  padding-top: var(--sl-space-3);
+  display: flex; flex-direction: column; gap: var(--sl-space-2);
+}
+td.actions form.danger label { font-size: var(--sl-font-size-sm); color: var(--sl-color-muted); }
+
+.signin { max-width: 32rem; }

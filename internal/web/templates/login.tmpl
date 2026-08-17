@@ -1,0 +1,17 @@
+{{define "content"}}
+<sl-card padding="lg" class="signin">
+  <h1 slot="header">Sign in</h1>
+  {{if eq .Reason "denied"}}
+    <sl-alert variant="error">That GitHub account is not an administrator of this server.</sl-alert>
+  {{else if eq .Reason "expired"}}
+    <sl-alert variant="warn">That sign-in attempt expired. Please try again.</sl-alert>
+  {{else if eq .Reason "github"}}
+    <sl-alert variant="error">GitHub sign-in failed. Please try again.</sl-alert>
+  {{else if eq .Reason "internal"}}
+    <sl-alert variant="error">Something went wrong completing sign-in. Check the server logs.</sl-alert>
+  {{end}}
+  <p>Administration requires a GitHub account named in this deployment's
+  <code>TYPST_D2_MCP_ADMINS</code> setting.</p>
+  <p><a class="btn btn-primary" href="/admin/login">Sign in with GitHub</a></p>
+</sl-card>
+{{end}}

@@ -63,7 +63,7 @@ func TestDeleteExpiredPDFLinks_RacesWithLookup(t *testing.T) {
 	}
 
 	var (
-		wg              sync.WaitGroup
+		wg                sync.WaitGroup
 		sweepErr, lookErr error
 	)
 	wg.Add(2)

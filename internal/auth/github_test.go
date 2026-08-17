@@ -96,24 +96,136 @@ func TestNone_AlwaysAnonymous(t *testing.T) {
 	}
 }
 
-func TestGitHubConfig_loginAllowed(t *testing.T) {
-	open := GitHubConfig{}
-	if !open.loginAllowed("anyone") {
-		t.Error("empty allowlist should permit any login")
+// loginAllowed now draws on three sources — the env allowlist, database
+// invites, and the admin list — so each is covered here, along with the
+// back-compatible open posture.
+func TestGitHub_loginAllowed_EnvAllowlist(t *testing.T) {
+	g := newGitHubBackend(t, "")
+	ctx := t.Context()
+
+	// No allowlist and no invites: open, as before invites existed.
+	if !g.loginAllowed(ctx, "anyone") {
+		t.Error("empty allowlist and no invites should permit any login")
 	}
 
-	restricted := GitHubConfig{AllowedLogins: map[string]bool{"dlouwers": true}}
-	if !restricted.loginAllowed("dlouwers") {
+	g.Cfg.AllowedLogins = map[string]bool{"dlouwers": true}
+	if !g.loginAllowed(ctx, "dlouwers") {
 		t.Error("allowlisted login should be permitted")
 	}
-	if !restricted.loginAllowed("DLOUWERS") {
+	if !g.loginAllowed(ctx, "DLOUWERS") {
 		t.Error("allowlist match must be case-insensitive")
 	}
-	if !restricted.loginAllowed("  dlouwers ") {
+	if !g.loginAllowed(ctx, "  dlouwers ") {
 		t.Error("allowlist match must tolerate surrounding whitespace")
 	}
-	if restricted.loginAllowed("octocat") {
+	if g.loginAllowed(ctx, "octocat") {
 		t.Error("non-allowlisted login must be rejected")
+	}
+}
+
+func TestGitHub_loginAllowed_Invites(t *testing.T) {
+	g := newGitHubBackend(t, "")
+	ctx := t.Context()
+
+	if err := g.Store.CreateInvite(ctx, "dlouwers", "octocat"); err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	if !g.loginAllowed(ctx, "octocat") {
+		t.Error("invited login rejected")
+	}
+	// With no allowlist and no admins configured, this deployment is
+	// still open — the posture follows configuration, not data.
+	if g.InviteOnly() {
+		t.Error("deployment reported invite-only with nothing configured")
+	}
+
+	// Configure an admin: that is the act that closes the server.
+	g.Cfg.AdminLogins = map[string]bool{"dlouwers": true}
+	if !g.InviteOnly() {
+		t.Error("configuring an admin should close the server")
+	}
+	if g.loginAllowed(ctx, "stranger") {
+		t.Error("uninvited login permitted on an invite-only deployment")
+	}
+	if !g.loginAllowed(ctx, "octocat") {
+		t.Error("invited login rejected")
+	}
+
+	// Revoking takes effect immediately.
+	if err := g.Store.RevokeInvite(ctx, "dlouwers", "octocat"); err != nil {
+		t.Fatalf("RevokeInvite: %v", err)
+	}
+	if g.loginAllowed(ctx, "octocat") {
+		t.Error("revoked login still permitted")
+	}
+}
+
+// Revoking the last invite must not reopen the server. Deriving the
+// posture from the invites table would do exactly that: the table goes
+// empty and every GitHub account is admitted again.
+func TestGitHub_loginAllowed_RevokingLastInviteDoesNotReopen(t *testing.T) {
+	g := newGitHubBackend(t, "")
+	ctx := t.Context()
+	g.Cfg.AdminLogins = map[string]bool{"dlouwers": true}
+
+	if err := g.Store.CreateInvite(ctx, "dlouwers", "octocat"); err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	if err := g.Store.RevokeInvite(ctx, "dlouwers", "octocat"); err != nil {
+		t.Fatalf("RevokeInvite: %v", err)
+	}
+
+	if g.loginAllowed(ctx, "stranger") {
+		t.Error("server reopened to everyone after the last invite was revoked")
+	}
+	if g.loginAllowed(ctx, "octocat") {
+		t.Error("revoked user still permitted")
+	}
+	if !g.loginAllowed(ctx, "dlouwers") {
+		t.Error("admin locked out")
+	}
+}
+
+// The env allowlist keeps working alongside invites, so a deployment
+// that has one configured is not disturbed by the new table.
+func TestGitHub_loginAllowed_EnvAndInvitesCombine(t *testing.T) {
+	g := newGitHubBackend(t, "")
+	ctx := t.Context()
+	g.Cfg.AllowedLogins = map[string]bool{"dlouwers": true}
+
+	if err := g.Store.CreateInvite(ctx, "dlouwers", "octocat"); err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	for _, login := range []string{"dlouwers", "octocat"} {
+		if !g.loginAllowed(ctx, login) {
+			t.Errorf("%s should be permitted", login)
+		}
+	}
+	if g.loginAllowed(ctx, "stranger") {
+		t.Error("stranger permitted")
+	}
+}
+
+// An admin is implicitly allowed, so an operator cannot lock themselves
+// out of their own server with a restrictive allowlist or an empty
+// invites table.
+func TestGitHub_loginAllowed_AdminNeverLockedOut(t *testing.T) {
+	g := newGitHubBackend(t, "")
+	ctx := t.Context()
+	g.Cfg.AdminLogins = map[string]bool{"dlouwers": true}
+	g.Cfg.AllowedLogins = map[string]bool{"someoneelse": true}
+
+	if err := g.Store.CreateInvite(ctx, "dlouwers", "octocat"); err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	if !g.loginAllowed(ctx, "dlouwers") {
+		t.Error("admin denied despite being neither allowlisted nor invited")
+	}
+	if !g.Cfg.IsAdmin("DLOUWERS") {
+		t.Error("IsAdmin must be case-insensitive")
+	}
+	if g.Cfg.IsAdmin("octocat") {
+		t.Error("non-admin reported as admin")
 	}
 }
 
@@ -344,9 +456,9 @@ func TestOAuth_PKCEMismatch(t *testing.T) {
 func TestOAuth_Register_RejectsBadRedirectURI(t *testing.T) {
 	g := newGitHubBackend(t, "")
 	cases := []string{
-		`{"client_name":"x","redirect_uris":["http://example.com/cb"]}`,         // plain http, not localhost
-		`{"client_name":"x","redirect_uris":["not-a-url"]}`,                    // not absolute
-		`{"client_name":"x","redirect_uris":[]}`,                                // empty
+		`{"client_name":"x","redirect_uris":["http://example.com/cb"]}`,                                        // plain http, not localhost
+		`{"client_name":"x","redirect_uris":["not-a-url"]}`,                                                    // not absolute
+		`{"client_name":"x","redirect_uris":[]}`,                                                               // empty
 		`{"client_name":"x","redirect_uris":["https://x"],"token_endpoint_auth_method":"client_secret_basic"}`, // confidential client
 	}
 	for _, body := range cases {
