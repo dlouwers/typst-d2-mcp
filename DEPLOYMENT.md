@@ -55,6 +55,8 @@ The OAuth scope requested is `read:user user:email` — read-only.
 | `TYPST_D2_MCP_GITHUB_CLIENT_SECRET` | _required for github_ | OAuth Client secret. |
 | `TYPST_D2_MCP_QUOTA_PER_DAY` | `1` | Compiles per UTC day per non-anonymous user. `0` disables. |
 | `TYPST_D2_MCP_COMPILE_TIMEOUT` | `30s` | Per-compile budget (parses Go duration strings). `0` defers to caller. |
+| `TYPST_D2_MCP_WORKSPACE_TTL` | `168h` (7d) | Age after which workspace files are purged. `0` disables the purge; sizes are still measured. |
+| `TYPST_D2_MCP_SWEEP_INTERVAL` | `1h` | Gap between garbage-collection passes. |
 | `TYPST_D2_MCP_MAX_INPUT_BYTES` | `1048576` (1 MiB) | Cap on `put_file` and compile input sizes. |
 | `TYPST_D2_MCP_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error`. |
 | `TYPST_D2_MCP_LOG_FORMAT` | `json` in http, `text` in stdio | `json` or `text`. |
@@ -88,12 +90,29 @@ the callback URL is `https://...`. Bearer tokens must travel over TLS.
 The state volume at `/var/lib/typst-d2-mcp` holds:
 
 - `workspaces/<user_id>/` — each authenticated user's sandboxed working
-  tree, including compiled PDFs. Files do **not** auto-expire today
-  (sub-issue [#5](https://github.com/dlouwers/typst-d2-mcp/issues/2)
-  will add TTL purge); operators should mount this on a volume with
-  reasonable size limits and periodically prune.
+  tree, including compiled PDFs. Treated as scratch space: files are
+  purged once they pass `TYPST_D2_MCP_WORKSPACE_TTL` (7 days by
+  default), since everything in them is reproducible from a re-upload
+  and recompile. A file with an unexpired download link is kept however
+  old it is, so a URL already in someone's hands never breaks.
 - `auth.sqlite` — users, hashed API keys, and the per-day compile
   counter. Losing this file logs everyone out and resets quota.
+
+### Garbage collection
+
+A background sweeper runs every `TYPST_D2_MCP_SWEEP_INTERVAL` and:
+
+- deletes `pdf_links` rows past their expiry. (Fetching an expired link
+  already deletes its row, but a link that is minted and never clicked
+  is never read, so nothing would otherwise collect it.)
+- purges workspace files older than the TTL, skipping any that a live
+  download link still points at, and removes directories the purge
+  leaves empty;
+- records each user's total workspace size, which the admin UI reads
+  instead of walking the filesystem on page load.
+
+Setting `TYPST_D2_MCP_WORKSPACE_TTL=0` disables only the file purge —
+link sweeping and size measurement still run.
 
 Both paths are derived from env vars at startup; override them if you
 prefer a different layout.
