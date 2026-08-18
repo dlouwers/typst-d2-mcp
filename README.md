@@ -21,7 +21,8 @@ Render [D2 diagrams](https://d2lang.com) in [Typst](https://typst.app) documents
 
 - 🤖 **AI Assistant Integration** - Works with Claude Desktop, Cline, OpenCode, and other MCP clients
 - 📝 **Encourages Visual Documentation** - AI creates Typst documents with embedded D2 diagrams
-- ✨ **Single Focused Tool**: `compile_typst_with_d2` - Compile Typst documents with #d2[...] blocks
+- ✨ **Focused tool surface**: `compile_typst_with_d2` to compile, `put_file` to place sources when the client cannot write to the server's filesystem
+- 🌐 **Runs locally or hosted** - stdio for a desktop client, or an HTTP server with GitHub sign-in, per-user workspaces and quota (see [Hosted mode](#hosted-mode))
 - 🎯 **Best for**: Generating technical documentation, architecture docs, and illustrated guides
 
 ## Quick Start
@@ -119,17 +120,34 @@ Add to your Claude Desktop config file:
 
 **Note:** If installed via Homebrew, the binary is at `/opt/homebrew/bin/typst-d2-mcp` (macOS ARM) or `/usr/local/bin/typst-d2-mcp` (macOS Intel/Linux). Adjust path if built from source.
 
-#### Available Tool
+#### Available Tools
 
 **compile_typst_with_d2** - Compile Typst documents with embedded D2 diagrams
 
-This is the single focused tool that encourages AI assistants to create rich, visual documentation.
+The primary tool, and the one whose description steers AI assistants toward
+rich, visual documentation.
 
 **Input:**
-- `file_path` (required): Absolute path to Typst source file (.typ) containing #d2[...] blocks
+- `file_path` (required): Typst source file (.typ) containing #d2[...] blocks.
+  Absolute in local stdio mode; **workspace-relative** in hosted mode, where
+  paths that escape the caller's workspace are rejected.
 
 **Output:**
-- Success message with PDF path
+- A success message, plus a `resource_link` to the PDF
+  (`typst-d2://pdf/...`, readable with the standard MCP `resources/read`).
+  In hosted mode the result also carries a short-lived HTTPS download URL, for
+  clients that render links but not resource links.
+
+**put_file** - Write a file into the server's active workspace
+
+Only needed when your client cannot write to the server's filesystem — that is,
+when talking to a hosted server over HTTP. Against a local stdio server, use
+your own editor or filesystem tools instead; there is no reason to push file
+contents through the MCP channel.
+
+**Input:**
+- `path` (required): destination, workspace-relative in hosted mode
+- `content` (required), `encoding` (optional): `utf8` (default) or `base64`
 
 **The tool's description guides AI assistants to:**
 - Use D2 diagrams for system architectures, flowcharts, ERDs, and technical illustrations
@@ -176,6 +194,36 @@ AI assistant:
 Result: Professional documentation with visual diagram
 ```
 
+## Hosted mode
+
+The same binary runs as an HTTP server, which is how you would offer it to
+people who are not on your machine. Run your own — this repository does not
+point at a shared instance.
+
+In this mode the server:
+
+- serves the MCP Streamable HTTP transport at **`/mcp`** (configurable via
+  `TYPST_D2_MCP_PATH`). That URL is the only thing a user needs: the server also
+  acts as an OAuth 2.1 authorization server, so a client like Claude.ai
+  discovers it from the `401` challenge, registers itself, and walks the user
+  through **GitHub sign-in** — no token to copy and paste
+- gives each authenticated user a **sandboxed workspace**; `file_path` and
+  `put_file` paths are resolved inside it, and traversal is rejected
+- meters compiles with a **per-day quota**, with a per-user override
+- mints **short-lived download links** for compiled PDFs, for clients that
+  render HTTPS links but not MCP resource links
+- offers an **admin UI at `/admin`** for the operator: invite users, set or
+  remove a user's quota, revoke access and API keys, delete a user, and read an
+  audit log of all of it
+- **garbage-collects** expired links and aged-out workspace files on a timer
+
+Access is invite-only once you name an administrator, and an operator manages
+who gets in from `/admin`.
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the full recipe: GitHub OAuth app
+setup, every environment variable, docker-compose and Kubernetes manifests,
+schema migrations, and hardening notes.
+
 ## How It Works
 
 1. **Parse** - Scans your `.typ` file for `#d2[...]` blocks
@@ -191,7 +239,7 @@ Result: Professional documentation with visual diagram
 
 ## Requirements
 
-- **Go 1.23+** (for building from source, optional)
+- **Go 1.25+** (for building from source, optional — see `go.mod` for the exact directive)
 - **D2 CLI** installed and in PATH: https://d2lang.com/tour/install
 - **Typst 0.14.2+**: https://github.com/typst/typst
 - **Typst `based` package**: Automatically imported (no manual setup needed)
@@ -304,18 +352,32 @@ go build -o typst-d2-prep ./cmd/typst-d2-prep
 ### Running Tests
 
 ```bash
-go test -v ./...
+go test ./...
 ```
+
+Browser-level checks for the admin UI live in `playwright/` and run in CI. They
+cover what a Go test cannot reach — cookie `SameSite` behaviour, htmx swaps, and
+that every action still works with JavaScript disabled:
+
+```bash
+cd playwright && bun install && bunx playwright install chromium
+bunx playwright test
+```
+
+The suite starts the server itself; no running instance is needed.
 
 ### Using Devcontainer
 
-The project includes a devcontainer configuration with all tools pre-installed:
-- Go 1.25
-- D2 CLI
-- Typst CLI
-- Linting tools (golangci-lint, govulncheck, etc.)
+The project includes a devcontainer — a plain Debian base with everything added
+as devcontainer features, so each tool's version is a one-line change:
 
-Open in VS Code with Dev Containers extension for instant setup.
+- Go 1.26 (via the Go feature; `go.mod` keeps its own language-version directive)
+- D2 and Typst CLIs, pinned to the versions the production image ships
+- golangci-lint, pinned to the version CI runs, plus gopls and govulncheck
+- kubectl and sqlite3, for inspecting a running deployment
+- Node and bun, for the Playwright suite
+
+Open in VS Code with the Dev Containers extension for instant setup.
 
 ## Limitations
 
@@ -347,4 +409,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Related Documentation
 
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Running the hosted server: OAuth, quota, admin UI, garbage collection, Kubernetes
+- [MCP_GUIDE.md](MCP_GUIDE.md) - Working with the MCP server
+- [HOMEBREW_SETUP.md](HOMEBREW_SETUP.md) - Homebrew tap maintenance
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) - Technical implementation details
