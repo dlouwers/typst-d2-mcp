@@ -20,9 +20,14 @@ COPY . .
 # Static-ish build: CGO disabled (modernc.org/sqlite is pure Go, so this
 # is safe), trimpath to keep the binary reproducible.
 ARG VERSION=dev
+# Passed by .github/workflows/image.yml. Declared here or the build-args
+# are silently dropped — which is what used to happen, leaving the binary
+# with no way to name the commit it was built from.
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath \
-      -ldflags="-s -w -X main.serverVersion=${VERSION}" \
+      -ldflags="-s -w -X main.serverVersion=${VERSION} -X main.gitSHA=${GIT_SHA} -X main.buildTime=${BUILD_TIME}" \
       -o /out/typst-d2-mcp \
       ./cmd/typst-d2-mcp
 

@@ -34,6 +34,14 @@ import (
 // the linker to rewrite it.
 var serverVersion = "dev"
 
+// gitSHA and buildTime are stamped the same way, from build-args the
+// image workflow already computes. They are what let an operator tie a
+// running container back to a commit — the admin UI shows them.
+var (
+	gitSHA    = "unknown"
+	buildTime = "unknown"
+)
+
 const (
 	serverName = "typst-d2-mcp"
 
@@ -51,6 +59,7 @@ const (
 	envGitHubSecret    = "TYPST_D2_MCP_GITHUB_CLIENT_SECRET"
 	envGitHubAllowlist = "TYPST_D2_MCP_GITHUB_ALLOWLIST"
 	envAdmins          = "TYPST_D2_MCP_ADMINS"
+	envEnvironment     = "TYPST_D2_MCP_ENV"
 	envSessionKey      = "TYPST_D2_MCP_SESSION_KEY"
 	envQuotaPerDay     = "TYPST_D2_MCP_QUOTA_PER_DAY"
 	envLogLevel        = "TYPST_D2_MCP_LOG_LEVEL"
@@ -256,6 +265,9 @@ func main() {
 
 	slog.Info("starting",
 		"version", serverVersion,
+		"git_sha", gitSHA,
+		"build_time", buildTime,
+		"env", os.Getenv(envEnvironment),
 		"auth", backend.Name(),
 		"admins", len(parseAllowlist(os.Getenv(envAdmins))),
 		"quota_per_day", quotaPerDay(),
@@ -560,12 +572,26 @@ func newAdminUI(gh *auth.GitHub, store *authdb.Store, factory workspace.Factory)
 			"invite_only", gh.InviteOnly())
 	}
 
+	// Schema revision is read once: migrations only run at startup, so
+	// it cannot change under a running process.
+	revision, err := store.SchemaRevision()
+	if err != nil {
+		return nil, fmt.Errorf("read schema revision: %w", err)
+	}
+
 	return web.New(web.Config{
 		Store:         store,
 		GitHub:        gh,
 		Sessions:      web.NewSessionCodec(key, 12*time.Hour, secure),
 		WorkspaceRoot: root,
 		QuotaDefault:  quotaPerDay,
+		Build: web.BuildInfo{
+			Environment:    os.Getenv(envEnvironment),
+			Version:        serverVersion,
+			GitSHA:         gitSHA,
+			BuildTime:      buildTime,
+			SchemaRevision: revision,
+		},
 	})
 }
 

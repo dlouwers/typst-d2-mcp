@@ -44,6 +44,21 @@ type Config struct {
 	// QuotaDefault reports the deployment-wide default a user inherits
 	// when they have no override.
 	QuotaDefault func() int
+
+	// Build identifies the running binary in the admin UI's banner.
+	Build BuildInfo
+}
+
+// BuildInfo is what the banner shows so an operator can tell which
+// build is answering, without shelling into the pod. Environment is the
+// switch: empty renders no banner at all, so production stays plain and
+// the loud strip means "not production".
+type BuildInfo struct {
+	Environment    string
+	Version        string
+	GitSHA         string
+	BuildTime      string
+	SchemaRevision int
 }
 
 // Server renders and handles the admin UI.

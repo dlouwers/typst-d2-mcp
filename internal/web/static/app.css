@@ -118,3 +118,24 @@ td.actions form.danger {
 td.actions form.danger label { font-size: var(--sl-font-size-sm); color: var(--sl-color-muted); }
 
 .signin { max-width: 32rem; }
+
+/* Deployment banner. Loud on purpose: it only renders outside
+   production, and its job is to stop you reading a test environment as
+   the real one. Amber rather than a brand colour for the same reason —
+   it should not look like part of the product. */
+.env-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sl-space-3);
+  align-items: baseline;
+  padding: var(--sl-space-2) var(--sl-space-5);
+  background: var(--sl-color-amber-500, #f59e0b);
+  color: #1a1a1a;
+  font-family: var(--sl-font-family-mono, ui-monospace, monospace);
+  font-size: var(--sl-font-size-xs);
+  letter-spacing: 0.02em;
+}
+.env-banner strong {
+  text-transform: uppercase;
+  font-weight: var(--sl-font-weight-heavy, 800);
+}
