@@ -26,11 +26,20 @@ export function seedSignedInUser(githubId: number, login: string): string {
   return `gh:${githubId}`;
 }
 
-/** Give a user an API key so the revoke-keys action has something to do. */
+/**
+ * Give a user an API key so the revoke-keys action has something to do.
+ *
+ * last_used_at is set, not left NULL, because a *used* key is what the
+ * production database actually contains — and rendering one used to
+ * fail: the user-list query wrapped that column in MAX(), which returns
+ * SQLite text rather than a timestamp. Seeding an unused key renders a
+ * NULL, which scans fine and hides the bug.
+ */
 export function seedAPIKey(login: string): void {
   sql(
-    `INSERT INTO api_keys(user_id, key_hash)
-     SELECT id, randomblob(32) FROM users WHERE github_login = '${login}'`,
+    `INSERT INTO api_keys(user_id, key_hash, last_used_at)
+     SELECT id, randomblob(32), CURRENT_TIMESTAMP
+       FROM users WHERE github_login = '${login}'`,
   );
 }
 

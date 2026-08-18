@@ -95,7 +95,16 @@ SELECT
   COALESCE(u.email, ''),
   u.quota_per_day,
   (SELECT COUNT(*)   FROM api_keys k WHERE k.user_id = u.id)        AS key_count,
-  (SELECT MAX(k.last_used_at) FROM api_keys k WHERE k.user_id = u.id) AS last_used_at,
+  -- ORDER BY ... LIMIT 1 rather than MAX(): last_used_at is written by
+  -- CURRENT_TIMESTAMP, so it holds SQLite text. A plain column
+  -- reference keeps the column's declared TIMESTAMP type, which is what
+  -- lets the driver hand back a time.Time; wrapping it in an aggregate
+  -- discards that and yields a bare string, which fails to scan into
+  -- sql.NullTime. Rows where the key was never used are excluded so a
+  -- NULL cannot sort above a real timestamp.
+  (SELECT k.last_used_at FROM api_keys k
+    WHERE k.user_id = u.id AND k.last_used_at IS NOT NULL
+    ORDER BY k.last_used_at DESC LIMIT 1)                           AS last_used_at,
   (SELECT c.count FROM compiles c
      WHERE c.user_id = 'gh:' || u.github_id AND c.utc_date = ?)     AS used_today,
   (SELECT w.bytes       FROM workspace_usage w WHERE w.user_id = 'gh:' || u.github_id),
