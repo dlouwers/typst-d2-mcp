@@ -32,11 +32,27 @@ curl -fsSL "https://github.com/typst/typst/releases/download/${TYPST_VERSION}/ty
 sudo install -m 0755 "$tmp/typst" /usr/local/bin/typst
 rm -rf "$tmp"
 
-# The base image ships golangci-lint 2.x. CI runs 1.64.8 (that is what
-# golangci-lint-action resolves `latest` to at its pinned version), and
-# the two disagree about config format and default linters — so a clean
-# local run would not mean a clean CI run. Pin to CI's version until
-# both are moved to 2.x together.
+# sqlite3 for inspecting auth.sqlite — the app's own driver is pure Go,
+# so the CLI is not present anywhere otherwise. Plain apt rather than the
+# devcontainers-extra apt-get-packages feature: that one is built on
+# nanolayer, which leaves /tmp unusable (see devcontainer.json).
+echo "==> sqlite3"
+sudo apt-get update -qq
+sudo apt-get install -y -qq --no-install-recommends sqlite3
+
+# bun runs the Playwright suite. Same reasoning as sqlite3: the
+# community feature is a nanolayer wrapper. This is the installer the
+# experiments devcontainer uses.
+echo "==> bun"
+curl -fsSL https://bun.sh/install | bash > /dev/null
+sudo ln -sf "$HOME/.bun/bin/bun" /usr/local/bin/bun
+sudo ln -sf "$HOME/.bun/bin/bunx" /usr/local/bin/bunx
+
+# golangci-lint is pinned to the version CI runs (what
+# golangci-lint-action resolves `latest` to at its pinned version). v1
+# and v2 disagree about config format and default linters, so an
+# unpinned install would mean a clean local run does not imply a clean
+# CI run. Moving both to 2.x is a separate job.
 echo "==> Go tools"
 go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 go install golang.org/x/tools/gopls@latest

@@ -1,39 +1,58 @@
 // typst-d2-mcp devcontainer.
 //
-// A stock Go image plus features, rather than a bespoke Dockerfile:
-// features are versioned, cached and arch-aware, and maintained by
-// someone else. The small postCreate script covers only what no
-// trustworthy feature provides — d2, typst, and the Go tools that must
-// be `go install`ed (see below).
+// A plain Debian base plus features: nothing bespoke, and every tool
+// versioned independently. Go is a feature rather than a base image, so
+// bumping the toolchain is a one-line change here.
+//
+// Only official devcontainers/features are used. The devcontainers-extra
+// ones for bun and apt packages are both built on nanolayer, which
+// leaves /tmp as root:root 0755 instead of sticky 1777 — enough to break
+// `go build`, whose work directory lives there, and enough to make a
+// later feature fail outright on `apt`. Those two tools are installed in
+// post-create.sh instead.
 {
   "name": "typst-d2-mcp",
-  "image": "mcr.microsoft.com/devcontainers/go:1.25",
+  "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
-    // kubectl for inspecting the test deployment (the runtime image has
+    // Ahead of go.mod's `go 1.25.5` directive on purpose. The directive
+    // is the *language* version, enforced by the compiler whatever
+    // toolchain runs it, so 1.26 here cannot silently introduce
+    // 1.26-only syntax that CI would then reject.
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.26"
+    },
+    // kubectl for inspecting the test deployment. The runtime image has
     // no sqlite3, so reading auth.sqlite means `kubectl exec -- cat`
-    // out to the host and querying it locally). Helm and minikube are
-    // not used here.
+    // out to the host and querying it locally. Helm and minikube unused.
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
       "helm": "none",
       "minikube": "none"
     },
     // gh for the PR/issue workflow this repo runs on.
     "ghcr.io/devcontainers/features/github-cli:1": {},
-    // sqlite3 for inspecting auth.sqlite — the app's own driver is pure
-    // Go, so the CLI is not otherwise present anywhere.
-    "ghcr.io/devcontainers-extra/features/apt-get-packages:1": {
-      "packages": "sqlite3"
-    },
-    // Node + bun drive the Playwright suite under playwright/.
-    // Playwright's CLI is a Node script and its workers fork node, so
-    // bun alone is not enough.
-    "ghcr.io/devcontainers/features/node:1": {},
-    "ghcr.io/devcontainers-extra/features/bun:1": {}
+    // Node for the Playwright suite under playwright/: its CLI is a Node
+    // script whose workers fork node, so bun alone is not enough.
+    // (bun and sqlite3 are in post-create — see the note there.)
+    "ghcr.io/devcontainers/features/node:1": {}
   },
+  // kubectl-helm-minikube must be installed last. Adding it flips /tmp
+  // from sticky 1777 to 0755 (measured: base+go+github-cli leaves 1777,
+  // adding this one leaves 0755 — the script contains no such chmod, so
+  // it appears to be a layer-commit interaction rather than an explicit
+  // one). Any apt-using feature installed after it then dies on
+  //   Unable to mkstemp /tmp/apt.sig.… (13: Permission denied)
+  // which took out node and go in turn. post-create.sh restores the mode
+  // for runtime, where `go build` needs /tmp for its work directory.
+  "overrideFeatureInstallOrder": [
+    "ghcr.io/devcontainers/features/github-cli",
+    "ghcr.io/devcontainers/features/node",
+    "ghcr.io/devcontainers/features/go",
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube"
+  ],
   "mounts": [
     // Read-only: enough to inspect the cluster, not to be surprised by
     // an accidental write. Sealing secrets stays in the experiments
-    // repo, where the seal-*.nu scripts and kubeseal live.
+    // repo, where kubeseal and the seal-*.nu scripts live.
     "source=${localEnv:HOME}/.kube,target=/home/vscode/.kube,type=bind,consistency=cached,readonly"
   ],
   "customizations": {
