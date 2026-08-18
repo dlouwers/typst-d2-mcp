@@ -506,3 +506,87 @@ func TestOAuth_WellKnown(t *testing.T) {
 		}
 	}
 }
+
+// The other half of the invite flow: an invited login that has never
+// signed in has no users row, because there is no github_id to key one
+// by until GitHub tells us. This drives the callback for such a login
+// and checks the row appears with the right id.
+//
+// It is the automated counterpart of the manual "invite a second GitHub
+// account and sign in as them" check — which stays worth doing, but
+// waits on a person, and this does not.
+func TestGitHub_Callback_InvitedFirstSignInCreatesUser(t *testing.T) {
+	const (
+		login    = "newbie"
+		githubID = int64(987654)
+	)
+	ts := fakeGitHub(t, "code-abc", "gh-token", login, githubID, "n@example.com")
+	defer ts.Close()
+
+	g := newGitHubBackend(t, ts.URL)
+	ctx := t.Context()
+	// Naming an admin closes the server, so the invite is what admits
+	// this account rather than the open posture.
+	g.Cfg.AdminLogins = map[string]bool{"dlouwers": true}
+	if err := g.Store.CreateInvite(ctx, "dlouwers", login); err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+
+	// No users row yet: the invite is keyed by login alone.
+	rows, err := g.Store.AdminUsers(ctx, "2026-08-18")
+	if err != nil {
+		t.Fatalf("AdminUsers: %v", err)
+	}
+	if len(rows) != 1 || rows[0].SignedIn {
+		t.Fatalf("before sign-in: want one pending invite, got %+v", rows)
+	}
+
+	c, err := g.Store.RegisterClient(ctx, "x", []string{"https://localhost/cb"}, "none")
+	if err != nil {
+		t.Fatalf("RegisterClient: %v", err)
+	}
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", c.ClientID)
+	q.Set("redirect_uri", "https://localhost/cb")
+	q.Set("state", "cs")
+	q.Set("code_challenge", "irrelevant-for-this-test")
+	q.Set("code_challenge_method", "S256")
+	azResp := httptest.NewRecorder()
+	g.ServeAuthorize(azResp, httptest.NewRequest(http.MethodGet, pathAuthorize+"?"+q.Encode(), nil))
+	loc, _ := url.Parse(azResp.Header().Get("Location"))
+	sid := loc.Query().Get("state")
+
+	cbResp := httptest.NewRecorder()
+	g.ServeCallback(cbResp, httptest.NewRequest(http.MethodGet, pathGitHubCallback+"?code=code-abc&state="+sid, nil))
+	if cbResp.Code != http.StatusFound {
+		t.Fatalf("callback status = %d, want 302", cbResp.Code)
+	}
+	cbLoc, _ := url.Parse(cbResp.Header().Get("Location"))
+	if got := cbLoc.Query().Get("error"); got != "" {
+		t.Fatalf("invited user was refused: %s", got)
+	}
+	if cbLoc.Query().Get("code") == "" {
+		t.Fatal("invited user received no authorization code")
+	}
+
+	// The users row now exists, keyed by the id GitHub reported, and the
+	// invite is still there — signing in does not consume it.
+	rows, err = g.Store.AdminUsers(ctx, "2026-08-18")
+	if err != nil {
+		t.Fatalf("AdminUsers after sign-in: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1: %+v", len(rows), rows)
+	}
+	got := rows[0]
+	if !got.SignedIn {
+		t.Error("user is still marked as not signed in")
+	}
+	if want := "gh:987654"; got.UserID != want {
+		t.Errorf("UserID = %q, want %q — github_id was not carried through", got.UserID, want)
+	}
+	if !got.Invited {
+		t.Error("invite disappeared when the user signed in")
+	}
+}
