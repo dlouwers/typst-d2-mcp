@@ -7,6 +7,22 @@
 # image-build time. CI runs this script followed by `git diff
 # --exit-code` to catch a forgotten re-sync.
 #
+# That CI check needs read access to the (private) design-system repo,
+# via a GitHub App rather than a personal token — the token is minted per
+# run and expires in an hour, and it belongs to the account rather than
+# to a person whose access it would otherwise inherit. To enable it:
+#
+#   1. Create a GitHub App under the dlouwers account. No webhook. Give
+#      it exactly one permission: Repository -> Contents -> Read-only.
+#   2. Install it, selecting only stormlantern-design-system.
+#   3. Generate a private key (downloads a .pem).
+#   4. In dlouwers/typst-d2-mcp:
+#        gh variable set DS_APP_ID --body "<the app id>"
+#        gh secret set DS_APP_PRIVATE_KEY < /path/to/key.pem
+#
+# Until DS_APP_ID exists the three steps in ci.yml skip, so a fork or a
+# fresh clone builds without them.
+#
 # Source is a local checkout of the design-system repo rather than the
 # GitHub Packages registry, because the packages are restricted and the
 # build would otherwise need a token. Point STORMLANTERN_DS at the
