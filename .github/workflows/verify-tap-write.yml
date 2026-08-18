@@ -1,0 +1,69 @@
+# Proves the Homebrew tap write path without cutting a release.
+#
+# The release workflow depends on three things that have never been
+# exercised together: the app minting a token, its installation actually
+# covering dlouwers/homebrew-tap, and the branch ruleset on that repo
+# letting the app bypass a protected main. If any of them is wrong, the
+# release finds out *after* publishing artifacts, which is the expensive
+# moment to fail.
+#
+# Run it from the Actions tab (workflow_dispatch). It pushes one empty
+# commit to the tap's default branch — no files change, and the only
+# trace is a line in that repo's history.
+name: Verify tap write access
+
+on:
+  workflow_dispatch:
+
+# Nothing here needs the default token; the app token does all the work.
+permissions: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the app to be configured
+        env:
+          TAP_APP_ID: ${{ vars.TAP_APP_ID }}
+        run: |
+          if [ -z "$TAP_APP_ID" ]; then
+            echo "::error::TAP_APP_ID is not set — configure the app before running this"
+            exit 1
+          fi
+
+      - name: Mint a token for the Homebrew tap
+        id: tap_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: dlouwers
+          repositories: homebrew-tap
+
+      - name: Check out the tap
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: dlouwers/homebrew-tap
+          token: ${{ steps.tap_token.outputs.token }}
+          path: tap
+
+      # The push is the actual test: an empty commit still has to satisfy
+      # the ruleset, so a missing or wrong bypass fails here exactly as it
+      # would during a release.
+      - name: Push an empty commit to the protected branch
+        working-directory: tap
+        run: |
+          git config user.name "stormlantern-actions-write[bot]"
+          git config user.email "stormlantern-actions-write[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: verify app write access (run ${GITHUB_RUN_ID})"
+          git push
+
+      - name: Report
+        run: |
+          echo "### Tap write access verified :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- app minted a token for \`dlouwers/homebrew-tap\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- its installation covers that repository" >> "$GITHUB_STEP_SUMMARY"
+          echo "- the branch ruleset let it push to a protected \`main\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`HOMEBREW_TAP_TOKEN\` can now be deleted, and the fallback in release.yml dropped." >> "$GITHUB_STEP_SUMMARY"
