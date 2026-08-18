@@ -139,7 +139,17 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		login, ok := s.cfg.Sessions.Login(r)
 		if !ok {
-			if r.Method == http.MethodGet && !isHTMX(r) {
+			// htmx does not swap error responses, so a bare 401 leaves the
+			// button looking inert — which is exactly how an expired
+			// session presented: "Save quota fails", with nothing on
+			// screen to say why. HX-Redirect is honoured whatever the
+			// status, so the browser goes to sign in instead.
+			if isHTMX(r) {
+				w.Header().Set("HX-Redirect", "/admin/signin")
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if r.Method == http.MethodGet {
 				http.Redirect(w, r, "/admin/signin", http.StatusSeeOther)
 				return
 			}

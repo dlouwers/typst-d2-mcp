@@ -69,3 +69,33 @@ test.describe("access control", () => {
     expect(external).toEqual([]);
   });
 });
+
+// The Go test only asserts the HX-Redirect header; whether htmx acts on
+// it for a 401 is a browser behaviour. This is the scenario that was
+// reported as "Save quota fails": a session invalidated by a rollout,
+// leaving every action apparently inert.
+test("an htmx action with a dead session lands on the sign-in page", async ({
+  context,
+  page,
+}) => {
+  await signIn(context, APP_ORIGIN);
+  await page.goto(`${APP_ORIGIN}/admin/`);
+  await expect(page.locator("#users")).toBeVisible();
+
+  // Invalidate the session behind the page's back, as a pod restart
+  // with a generated signing key does.
+  await context.clearCookies();
+  await context.addCookies([
+    {
+      name: "ttd2_admin_session",
+      value: "stale.value",
+      domain: "admin.test",
+      path: "/",
+    },
+  ]);
+
+  await page.fill("#invite-login", "afterexpiry");
+  await page.click('form.invite button[type="submit"]');
+
+  await expect(page).toHaveURL(/\/admin\/signin$/);
+});
