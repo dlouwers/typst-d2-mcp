@@ -24,9 +24,15 @@ resources:
   # It moved to overlays/prod/ (dlouwers/experiments#290).
   - sealed-secret.yaml
   # - sealed-ghcr-pull.yaml
+# Overrides merged over the base generator, keeping the hashed name and
+# therefore the automatic rollout on change.
+configMapGenerator:
+  - name: typst-d2-mcp-config
+    behavior: merge
+    envs:
+      - config.env
 patches:
   - path: ingress-patch.yaml
-  - path: configmap-patch.yaml
   # Same Longhorn migration as prod, against the test env's PV.
   - path: pvc-patch.yaml
 # Bot-rewritten on every successful main build by Flux's
