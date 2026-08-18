@@ -1,21 +1,57 @@
+// typst-d2-mcp devcontainer.
+//
+// A stock Go image plus features, rather than a bespoke Dockerfile:
+// features are versioned, cached and arch-aware, and maintained by
+// someone else. The small postCreate script covers only what no
+// trustworthy feature provides — d2, typst, and the Go tools that must
+// be `go install`ed (see below).
 {
   "name": "typst-d2-mcp",
-  "build": {
-    "dockerfile": "Dockerfile"
+  "image": "mcr.microsoft.com/devcontainers/go:1.25",
+  "features": {
+    // kubectl for inspecting the test deployment (the runtime image has
+    // no sqlite3, so reading auth.sqlite means `kubectl exec -- cat`
+    // out to the host and querying it locally). Helm and minikube are
+    // not used here.
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "helm": "none",
+      "minikube": "none"
+    },
+    // gh for the PR/issue workflow this repo runs on.
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // sqlite3 for inspecting auth.sqlite — the app's own driver is pure
+    // Go, so the CLI is not otherwise present anywhere.
+    "ghcr.io/devcontainers-extra/features/apt-get-packages:1": {
+      "packages": "sqlite3"
+    },
+    // Node + bun drive the Playwright suite under playwright/.
+    // Playwright's CLI is a Node script and its workers fork node, so
+    // bun alone is not enough.
+    "ghcr.io/devcontainers/features/node:1": {},
+    "ghcr.io/devcontainers-extra/features/bun:1": {}
   },
+  "mounts": [
+    // Read-only: enough to inspect the cluster, not to be surprised by
+    // an accidental write. Sealing secrets stays in the experiments
+    // repo, where the seal-*.nu scripts and kubeseal live.
+    "source=${localEnv:HOME}/.kube,target=/home/vscode/.kube,type=bind,consistency=cached,readonly"
+  ],
   "customizations": {
     "vscode": {
       "extensions": [
-        "golang.go"
+        "golang.go",
+        "ms-playwright.playwright"
       ],
       "settings": {
         "go.toolsManagement.autoUpdate": true
       }
     }
   },
-  "postCreateCommand": "bash .devcontainer/post-create.sh",
-  "remoteEnv": {
+  "containerEnv": {
+    "KUBECONFIG": "/home/vscode/.kube/config",
+    // Let `go install` fetch a newer toolchain when a tool needs one.
     "GOTOOLCHAIN": "auto"
   },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode"
 }
