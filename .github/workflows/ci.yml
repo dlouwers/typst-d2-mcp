@@ -91,14 +91,9 @@ jobs:
         run: go build -v ./cmd/typst-d2-mcp
 
       - name: Lint
-        # The action's default install-mode downloads a pre-built
-        # binary that ships with Go 1.24 and refuses to lint a Go-1.25
-        # module. `goinstall` recompiles the linter with the runner's
-        # toolchain (set above to 1.25), avoiding the version mismatch.
-        uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6.5.2
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: latest
-          install-mode: goinstall
 
   # Browser-level checks for the admin UI: the things a Go test cannot
   # reach. Chief among them is SameSite cookie behaviour — the only CSRF
