@@ -17,3 +17,12 @@ data:
   # one operator, "0 = unlimited" is effectively "unlimited for me".
   TYPST_D2_MCP_QUOTA_PER_DAY: "0"
   TYPST_D2_MCP_LOG_LEVEL: "debug"
+  # Admin UI at /admin. Naming an administrator is also what closes a
+  # deployment to uninvited accounts — harmless here, because the
+  # allowlist above already restricts this environment to one login.
+  # On prod the same setting would deny every existing user until they
+  # are invited, so invite first there.
+  #
+  # An admin login is implicitly allowed, so an empty invites table can
+  # never lock the operator out.
+  TYPST_D2_MCP_ADMINS: "dlouwers"

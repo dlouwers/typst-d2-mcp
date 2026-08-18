@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
+	"github.com/dlouwers/typst-d2-mcp/internal/metrics"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // pdfBody is long enough that a Range request returns a recognisable
@@ -163,4 +165,108 @@ func TestPDFDownload_LinkCannotEscapeTenantRoot(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 for a traversing path", rec.Code)
 	}
+}
+
+// The Grafana dashboard is built on PDFDownloadTotal, so a dropped
+// .Inc() would break observability silently — the handler would still
+// serve the right bytes and every other test would still pass. These
+// assert the counter moves on each labelled path.
+//
+// Counters are package-level and shared across the whole test binary, so
+// everything here measures a delta rather than an absolute value.
+func downloadCount(t *testing.T, result string) float64 {
+	t.Helper()
+	return testutil.ToFloat64(metrics.PDFDownloadTotal.WithLabelValues(result))
+}
+
+func TestPDFDownload_MetricsOnSuccess(t *testing.T) {
+	h, _, token := newDownloadFixture(t)
+	before := downloadCount(t, metrics.ResultOK)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/d/"+token, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	if got := downloadCount(t, metrics.ResultOK) - before; got != 1 {
+		t.Errorf("ok counter moved by %v, want 1", got)
+	}
+}
+
+// A Range request is one download, not two: the counter increments
+// before ServeContent decides how much of the file to write.
+func TestPDFDownload_MetricsCountRangeRequestOnce(t *testing.T) {
+	h, _, token := newDownloadFixture(t)
+	before := downloadCount(t, metrics.ResultOK)
+
+	req := httptest.NewRequest(http.MethodGet, "/d/"+token, nil)
+	req.Header.Set("Range", "bytes=0-7")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want 206", rec.Code)
+	}
+
+	if got := downloadCount(t, metrics.ResultOK) - before; got != 1 {
+		t.Errorf("ok counter moved by %v, want 1", got)
+	}
+}
+
+func TestPDFDownload_MetricsOnNotFound(t *testing.T) {
+	h, store, _ := newDownloadFixture(t)
+
+	t.Run("unknown token", func(t *testing.T) {
+		before := downloadCount(t, metrics.ResultNotFound)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/d/nosuchtoken", nil))
+		if got := downloadCount(t, metrics.ResultNotFound) - before; got != 1 {
+			t.Errorf("not_found counter moved by %v, want 1", got)
+		}
+	})
+
+	t.Run("swept file", func(t *testing.T) {
+		token, err := store.MintPDFLink(t.Context(), "gh:1", "gone.pdf", time.Hour)
+		if err != nil {
+			t.Fatalf("MintPDFLink: %v", err)
+		}
+		before := downloadCount(t, metrics.ResultNotFound)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/d/"+token, nil))
+		if got := downloadCount(t, metrics.ResultNotFound) - before; got != 1 {
+			t.Errorf("not_found counter moved by %v, want 1", got)
+		}
+	})
+}
+
+func TestPDFDownload_MetricsOnFailure(t *testing.T) {
+	h, _, _ := newDownloadFixture(t)
+
+	t.Run("malformed token", func(t *testing.T) {
+		before := downloadCount(t, metrics.ResultFail)
+		rec := httptest.NewRecorder()
+		// A path with a further slash is not a token shape we mint.
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/d/some/token", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+		if got := downloadCount(t, metrics.ResultFail) - before; got != 1 {
+			t.Errorf("fail counter moved by %v, want 1", got)
+		}
+	})
+
+	t.Run("no store configured", func(t *testing.T) {
+		// AUTH=none deployments have no store; the endpoint must refuse
+		// rather than panic, and say so in the metrics.
+		noStore := handlePDFDownload(workspace.TenantFactory{Root: t.TempDir()}, nil)
+		before := downloadCount(t, metrics.ResultFail)
+		rec := httptest.NewRecorder()
+		noStore.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/d/anything", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+		if got := downloadCount(t, metrics.ResultFail) - before; got != 1 {
+			t.Errorf("fail counter moved by %v, want 1", got)
+		}
+	})
 }
