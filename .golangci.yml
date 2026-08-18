@@ -1,0 +1,18 @@
+# golangci-lint v2.
+#
+# v1 shipped a set of built-in exclusions and applied them silently; v2
+# removed that behaviour and expects them to be named. `std-error-handling`
+# is the preset holding the ones this repo relied on — unchecked deferred
+# Close on a read, os.Remove of a temp file, fmt.Fprint to a
+# ResponseWriter. Without it the v1 -> v2 move would surface eleven
+# findings that v1 had been hiding rather than eleven new problems.
+#
+# Two of those eleven were real and are fixed rather than excluded: a
+# Close after *writing* a temp file can hide a flush error, which would
+# hand typst a truncated document.
+version: "2"
+
+linters:
+  exclusions:
+    presets:
+      - std-error-handling

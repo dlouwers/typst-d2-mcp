@@ -832,7 +832,12 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		if _, err := tmpFile.WriteString(processed); err != nil {
 			return mcp.NewToolResultErrorFromErr("Failed to write temp file", err), nil
 		}
-		tmpFile.Close()
+		// Checked: a failed flush here would hand typst a truncated
+		// document, and the compile error that followed would point at the
+		// wrong thing.
+		if err := tmpFile.Close(); err != nil {
+			return mcp.NewToolResultErrorFromErr("Failed to close temp file", err), nil
+		}
 
 		// Output PDF sits next to the input .typ inside the workspace.
 		resolvedOut := strings.TrimSuffix(resolvedIn, ".typ") + ".pdf"

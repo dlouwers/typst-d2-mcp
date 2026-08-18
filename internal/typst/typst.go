@@ -25,7 +25,11 @@ func Compile(content, outputFile string) error {
 		tmpFile.Close()
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
-	tmpFile.Close()
+	// Checked, unlike the close in the error path above: a failed flush
+	// here means typst would compile a truncated document.
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
 
 	// Compile with Typst
 	cmd := exec.Command("typst", "compile", tmpPath, outputFile)

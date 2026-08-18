@@ -48,13 +48,10 @@ curl -fsSL https://bun.sh/install | bash > /dev/null
 sudo ln -sf "$HOME/.bun/bin/bun" /usr/local/bin/bun
 sudo ln -sf "$HOME/.bun/bin/bunx" /usr/local/bin/bunx
 
-# golangci-lint is pinned to the version CI runs (what
-# golangci-lint-action resolves `latest` to at its pinned version). v1
-# and v2 disagree about config format and default linters, so an
-# unpinned install would mean a clean local run does not imply a clean
-# CI run. Moving both to 2.x is a separate job.
+# Both local and CI are on golangci-lint v2 now, driven by .golangci.yml,
+# so `latest` matches what CI resolves rather than drifting from it.
 echo "==> Go tools"
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 go install golang.org/x/tools/gopls@latest
 go install golang.org/x/vuln/cmd/govulncheck@latest
 
