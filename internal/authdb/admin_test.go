@@ -476,3 +476,52 @@ func TestAudit_NoRowWhenActionFails(t *testing.T) {
 
 // nowUTC is a tiny helper so tests don't import time solely for this.
 func nowUTC() time.Time { return time.Now().UTC() }
+
+// Regression: AdminUsers failed in production with
+//
+//	scan admin user: ... unsupported Scan, storing driver.Value type
+//	string into type *time.Time
+//
+// because last_used_at is written by CURRENT_TIMESTAMP (SQLite text) and
+// the query wrapped it in MAX(), which discards the column's declared
+// TIMESTAMP type and returns a bare string.
+//
+// Every other test issued keys but never *used* one, leaving
+// last_used_at NULL — a NULL scans into sql.NullTime happily, so the
+// whole suite passed against a query that could not read a used key.
+// IdentityForKey is the step that makes the difference.
+func TestAdminUsers_AfterKeyHasBeenUsed(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+
+	uid, err := s.UpsertGitHubUser(ctx, 42, "octocat", "o@example.com")
+	if err != nil {
+		t.Fatalf("UpsertGitHubUser: %v", err)
+	}
+	key, err := s.IssueAPIKey(ctx, uid)
+	if err != nil {
+		t.Fatalf("IssueAPIKey: %v", err)
+	}
+	if _, err := s.IdentityForKey(ctx, key); err != nil {
+		t.Fatalf("IdentityForKey: %v", err)
+	}
+	// A second key that has never been used: its NULL last_used_at must
+	// not mask the used one.
+	if _, err := s.IssueAPIKey(ctx, uid); err != nil {
+		t.Fatalf("second IssueAPIKey: %v", err)
+	}
+
+	rows, err := s.AdminUsers(ctx, today)
+	if err != nil {
+		t.Fatalf("AdminUsers with a used key: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].KeyCount != 2 {
+		t.Errorf("KeyCount = %d, want 2", rows[0].KeyCount)
+	}
+	if rows[0].LastUsedAt == nil {
+		t.Error("LastUsedAt is nil despite the key having been used")
+	}
+}
