@@ -25,10 +25,10 @@ jobs:
     steps:
       - name: Require the app to be configured
         env:
-          TAP_APP_ID: ${{ vars.TAP_APP_ID }}
+          TAP_APP_CLIENT_ID: ${{ vars.TAP_APP_CLIENT_ID }}
         run: |
-          if [ -z "$TAP_APP_ID" ]; then
-            echo "::error::TAP_APP_ID is not set — configure the app before running this"
+          if [ -z "$TAP_APP_CLIENT_ID" ]; then
+            echo "::error::TAP_APP_CLIENT_ID is not set — configure the app before running this"
             exit 1
           fi
 
@@ -36,13 +36,13 @@ jobs:
         id: tap_token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.TAP_APP_ID }}
+          client-id: ${{ vars.TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
           owner: dlouwers
           repositories: homebrew-tap
 
       - name: Check out the tap
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dlouwers/homebrew-tap
           token: ${{ steps.tap_token.outputs.token }}
