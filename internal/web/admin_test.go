@@ -648,3 +648,36 @@ func TestBanner_ShownOnSignInPage(t *testing.T) {
 		t.Error("sign-in page has no banner")
 	}
 }
+
+// An expired session used to make every htmx action look inert: htmx
+// does not swap error responses, so a 401 produced no visible change.
+// HX-Redirect turns it into a trip to the sign-in page.
+func TestAccess_ExpiredSessionRedirectsHTMXAction(t *testing.T) {
+	f := newFixture(t)
+
+	r := f.as(t, "", http.MethodPost, "/admin/invite", url.Values{"login": {"someone"}})
+	r.AddCookie(&http.Cookie{Name: SessionCookie, Value: "stale.value"})
+	r.Header.Set("HX-Request", "true")
+	rec := f.do(t, r)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+	if got := rec.Header().Get("HX-Redirect"); got != "/admin/signin" {
+		t.Errorf("HX-Redirect = %q, want /admin/signin", got)
+	}
+}
+
+// A non-htmx POST keeps the plain 401: there is no browser to redirect,
+// and a redirect would mask the failure from a script or curl.
+func TestAccess_ExpiredSessionPlainPostStays401(t *testing.T) {
+	f := newFixture(t)
+
+	rec := f.do(t, f.as(t, "", http.MethodPost, "/admin/invite", url.Values{"login": {"someone"}}))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+	if rec.Header().Get("HX-Redirect") != "" {
+		t.Error("HX-Redirect set on a non-htmx request")
+	}
+}
