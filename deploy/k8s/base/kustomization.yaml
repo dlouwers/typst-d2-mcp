@@ -11,7 +11,6 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
-  - configmap.yaml
   - pvc.yaml
   - service.yaml
   - deployment.yaml
@@ -19,3 +18,18 @@ resources:
   - ingress.yaml
   - servicemonitor.yaml
   - networkpolicy.yaml
+
+# Generated, not a plain resource, so the name carries a content hash.
+# A hashed name is what makes a config change roll the Deployment: with
+# a fixed-name ConfigMap consumed via envFrom, editing it changes
+# nothing in the pod spec, so pods keep their original environment until
+# something unrelated restarts them. That is how the admin UI stayed
+# unreachable on test after TYPST_D2_MCP_ADMINS was added — the value
+# was in the cluster, just not in the running container.
+#
+# Kustomize rewrites the envFrom reference in deployment.yaml to the
+# hashed name automatically.
+configMapGenerator:
+  - name: typst-d2-mcp-config
+    envs:
+      - config.env
