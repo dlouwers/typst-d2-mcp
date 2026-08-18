@@ -67,3 +67,11 @@ export function auditActions(): string[] {
     .split("\n")
     .filter(Boolean);
 }
+
+/** Set a user's quota override directly: NULL inherits, 0 unlimited, N caps. */
+export function seedQuota(login: string, quota: number | null): void {
+  sql(
+    `UPDATE users SET quota_per_day = ${quota === null ? "NULL" : quota}
+      WHERE github_login = '${login}'`,
+  );
+}

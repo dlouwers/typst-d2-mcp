@@ -63,8 +63,17 @@
                   <legend>Quota</legend>
                   <label><input type="radio" name="mode" value="default" {{if not .QuotaOverride}}checked{{end}}> Default</label>
                   <label><input type="radio" name="mode" value="unlimited" {{if and .QuotaOverride (eq (deref .QuotaOverride) 0)}}checked{{end}}> Unlimited</label>
+                  {{/*
+                    No min/required on this field. It is validated by the
+                    browser whatever mode is selected, and there is no way to
+                    disable it conditionally without JavaScript — which this
+                    form deliberately does not depend on. A constraint here
+                    blocks saving Default or Unlimited whenever the box holds
+                    a value the constraint rejects. The server validates the
+                    number instead, and says so in the flash.
+                  */}}
                   <label><input type="radio" name="mode" value="fixed"> Fixed
-                    <input type="number" name="value" min="1" placeholder="10" value="{{quotaValue .QuotaOverride}}" class="narrow">
+                    <input type="number" name="value" inputmode="numeric" placeholder="10" value="{{quotaValue .QuotaOverride}}" class="narrow">
                   </label>
                   <button type="submit" class="btn btn-primary btn-sm">Save quota</button>
                 </fieldset>
