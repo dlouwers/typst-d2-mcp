@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -48,21 +48,21 @@ jobs:
       # there is no annual expiry to renew by hand. The app id is a repo
       # variable (it is not secret); only the private key is a secret.
       #
-      # All three steps stay inert until DS_APP_ID is set, so a fork or a
-      # fresh clone builds without them rather than failing.
+      # All three steps stay inert until DS_APP_CLIENT_ID is set, so a fork
+      # or a fresh clone builds without them rather than failing.
       - name: Mint a token for the design system
         id: ds_token
-        if: vars.DS_APP_ID != ''
+        if: vars.DS_APP_CLIENT_ID != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.DS_APP_ID }}
+          client-id: ${{ vars.DS_APP_CLIENT_ID }}
           private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
           owner: dlouwers
           repositories: stormlantern-design-system
 
       - name: Check out design system
-        if: vars.DS_APP_ID != ''
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: vars.DS_APP_CLIENT_ID != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dlouwers/stormlantern-design-system
           token: ${{ steps.ds_token.outputs.token }}
@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
 
       - name: Check vendored assets are in sync
-        if: vars.DS_APP_ID != ''
+        if: vars.DS_APP_CLIENT_ID != ''
         env:
           STORMLANTERN_DS: .design-system
         run: |
@@ -109,7 +109,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
