@@ -191,9 +191,14 @@ func quotaNumber(n int) string {
 	return fmt.Sprintf("%d/day", n)
 }
 
-// quotaValue is the number to prefill the edit field with.
+// quotaValue is the number to prefill the "fixed" edit field with.
+//
+// An override of 0 means unlimited, not a fixed quota of zero, so it
+// prefills nothing. Returning "0" here put an invalid value in a
+// number input and made the browser refuse to submit the form at all —
+// including when Default or Unlimited was the selected mode.
 func quotaValue(override *int) string {
-	if override == nil {
+	if override == nil || *override == 0 {
 		return ""
 	}
 	return fmt.Sprintf("%d", *override)

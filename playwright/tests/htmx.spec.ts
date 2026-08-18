@@ -7,6 +7,7 @@ import {
   countUsers,
   quotaFor,
   seedAPIKey,
+  seedQuota,
   seedSignedInUser,
 } from "../helpers/db";
 
@@ -164,5 +165,64 @@ test.describe("htmx actions", () => {
 
     await page.goto(`${APP_ORIGIN}/admin/audit`);
     await expect(page.locator("table")).toContainText("delete_user");
+  });
+});
+
+// Regression: a user already set to Unlimited stores quota_per_day = 0,
+// which the template prefilled into the "fixed" number input. With
+// min="1" on that input the browser refused to submit the form at all,
+// so an unlimited user could not be moved back to Default or re-saved
+// as Unlimited — the button simply did nothing.
+//
+// Browser-level by necessity: HTML constraint validation is enforced by
+// the browser, so no Go test could see it. It also survives JavaScript
+// being off, which is why the constraint could not just be toggled.
+test.describe("quota form validation", () => {
+  test.beforeEach(async ({ context, page }) => {
+    await signIn(context, APP_ORIGIN);
+    await page.goto(`${APP_ORIGIN}/admin/`);
+  });
+
+  test("an unlimited user can be set back to Default", async ({ page }) => {
+    seedSignedInUser(7001, "wasunlimited");
+    seedQuota("wasunlimited", 0);
+    await page.reload();
+    await expect(page.locator("tr", { hasText: "wasunlimited" })).toContainText("unlimited");
+
+    const row = await openRow(page, "wasunlimited");
+    await row.locator('input[name="mode"][value="default"]').check();
+    await row.getByRole("button", { name: "Save quota" }).click();
+
+    await expect(page.locator("#flash")).toContainText("Quota updated");
+    expect(quotaFor("wasunlimited")).toBe("NULL");
+  });
+
+  test("an unlimited user can be re-saved as Unlimited", async ({ page }) => {
+    seedSignedInUser(7002, "stayunlimited");
+    seedQuota("stayunlimited", 0);
+    await page.reload();
+
+    const row = await openRow(page, "stayunlimited");
+    await row.locator('input[name="mode"][value="unlimited"]').check();
+    await row.getByRole("button", { name: "Save quota" }).click();
+
+    await expect(page.locator("#flash")).toContainText("Quota updated");
+    expect(quotaFor("stayunlimited")).toBe("0");
+  });
+
+  // A junk value in the box must not block an unrelated mode either; the
+  // server decides, and only when Fixed is actually selected.
+  test("a junk value in the fixed box does not block saving Default", async ({ page }) => {
+    seedSignedInUser(7003, "junkvalue");
+    seedQuota("junkvalue", 5);
+    await page.reload();
+
+    const row = await openRow(page, "junkvalue");
+    await row.locator('input[name="value"]').fill("0");
+    await row.locator('input[name="mode"][value="default"]').check();
+    await row.getByRole("button", { name: "Save quota" }).click();
+
+    await expect(page.locator("#flash")).toContainText("Quota updated");
+    expect(quotaFor("junkvalue")).toBe("NULL");
   });
 });
