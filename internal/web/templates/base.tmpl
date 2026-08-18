@@ -10,6 +10,24 @@
 <script type="module" src="/admin/static/components.js"></script>
 </head>
 <body>
+{{/*
+  Deployment banner. Rendered server-side rather than as a custom
+  element so it survives with JavaScript off — the whole point is to
+  identify the running build when something is wrong, which is exactly
+  when you cannot assume the page is healthy.
+
+  Only shown when TYPST_D2_MCP_ENV is set, so production is plain and
+  the strip itself means "not production".
+*/}}
+{{with .Build}}{{if .Environment}}
+<div class="env-banner" role="status">
+  <strong>{{.Environment}}</strong>
+  <span>{{.Version}}</span>
+  {{if ne .GitSHA "unknown"}}<span>{{.GitSHA}}</span>{{end}}
+  {{if ne .BuildTime "unknown"}}<span>built {{.BuildTime}}</span>{{end}}
+  <span>schema r{{.SchemaRevision}}</span>
+</div>
+{{end}}{{end}}
 <header class="topbar">
   <a class="brand" href="/admin/">
     <img src="/admin/static/vendor/lantern-mark.svg" alt="" width="28" height="28">

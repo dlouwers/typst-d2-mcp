@@ -22,6 +22,7 @@ type pageVM struct {
 	Admin      string
 	Flash      string
 	FlashLevel string
+	Build      BuildInfo
 }
 
 // usersVM is the view model for the user list.
@@ -50,6 +51,7 @@ func (s *Server) usersViewModel(r *http.Request) (usersVM, error) {
 		pageVM: pageVM{
 			Title: "Users — typst-d2-mcp admin",
 			Admin: adminLogin(r.Context()),
+			Build: s.cfg.Build,
 		},
 		Rows:         rows,
 		DefaultQuota: s.cfg.QuotaDefault(),
@@ -84,6 +86,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		pageVM: pageVM{
 			Title: "Audit — typst-d2-mcp admin",
 			Admin: adminLogin(r.Context()),
+			Build: s.cfg.Build,
 		},
 		Entries: entries,
 	})

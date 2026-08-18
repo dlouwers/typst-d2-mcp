@@ -24,7 +24,10 @@ type loginVM struct {
 // expired session does not silently bounce a browser to github.com.
 func (s *Server) handleSignInPage(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, "login", loginVM{
-		pageVM: pageVM{Title: "Sign in — typst-d2-mcp admin"},
+		pageVM: pageVM{
+			Title: "Sign in — typst-d2-mcp admin",
+			Build: s.cfg.Build,
+		},
 		Reason: r.URL.Query().Get("reason"),
 	})
 }

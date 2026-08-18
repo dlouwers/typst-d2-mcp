@@ -24,6 +24,11 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
+	return newFixtureWithBuild(t, BuildInfo{})
+}
+
+func newFixtureWithBuild(t *testing.T, build BuildInfo) *fixture {
+	t.Helper()
 
 	store, err := authdb.Open(filepath.Join(t.TempDir(), "auth.sqlite"))
 	if err != nil {
@@ -47,6 +52,7 @@ func newFixture(t *testing.T) *fixture {
 		Sessions:      codec,
 		WorkspaceRoot: ws,
 		QuotaDefault:  func() int { return 1 },
+		Build:         build,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -569,5 +575,76 @@ func TestUsersPage_RendersQuotaOverrides(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("page missing quota label %q", want)
 		}
+	}
+}
+
+// The banner exists so an operator can tell which build is answering
+// without shelling into the pod — the question that made a stale image
+// hard to diagnose. It is server-rendered rather than a custom element
+// so it survives with JavaScript off, which is when you most need it.
+func TestBanner_ShownWithBuildInfo(t *testing.T) {
+	f := newFixtureWithBuild(t, BuildInfo{
+		Environment:    "test",
+		Version:        "sha-3a6a156",
+		GitSHA:         "3a6a156",
+		BuildTime:      "2026-08-18T06:19:22Z",
+		SchemaRevision: 5,
+	})
+
+	rec := f.do(t, f.as(t, "dlouwers", http.MethodGet, "/admin/", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		"env-banner", "test", "sha-3a6a156", "3a6a156",
+		"2026-08-18T06:19:22Z", "schema r5",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("banner missing %q", want)
+		}
+	}
+}
+
+// Production sets no environment, so the strip must not render at all —
+// its presence is the signal.
+func TestBanner_HiddenWithoutEnvironment(t *testing.T) {
+	f := newFixtureWithBuild(t, BuildInfo{
+		Version:        "v1.2.3",
+		SchemaRevision: 5,
+	})
+
+	rec := f.do(t, f.as(t, "dlouwers", http.MethodGet, "/admin/", nil))
+	if strings.Contains(rec.Body.String(), "env-banner") {
+		t.Error("banner rendered with no environment set")
+	}
+}
+
+// A local build has no ldflags, so sha and time are the "unknown"
+// placeholders; showing those is worse than showing nothing.
+func TestBanner_OmitsUnknownBuildFields(t *testing.T) {
+	f := newFixtureWithBuild(t, BuildInfo{
+		Environment:    "dev",
+		Version:        "dev",
+		GitSHA:         "unknown",
+		BuildTime:      "unknown",
+		SchemaRevision: 5,
+	})
+
+	rec := f.do(t, f.as(t, "dlouwers", http.MethodGet, "/admin/", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "env-banner") {
+		t.Fatal("banner not rendered")
+	}
+	if strings.Contains(body, "unknown") {
+		t.Error("banner shows \"unknown\" placeholders instead of omitting them")
+	}
+}
+
+// The sign-in page is where an operator lands when something is wrong,
+// so it needs the banner as much as the authenticated pages.
+func TestBanner_ShownOnSignInPage(t *testing.T) {
+	f := newFixtureWithBuild(t, BuildInfo{Environment: "test", Version: "sha-abc"})
+
+	rec := f.do(t, f.as(t, "", http.MethodGet, "/admin/signin", nil))
+	if !strings.Contains(rec.Body.String(), "env-banner") {
+		t.Error("sign-in page has no banner")
 	}
 }
