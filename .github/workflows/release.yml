@@ -20,8 +20,31 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.23'
+          # go.mod requires 1.25.5. With 1.23 here the build still worked,
+          # but only because the go command silently downloaded the newer
+          # toolchain on every run — slower, and it hid the mismatch.
+          go-version: '1.25'
           cache: true
+
+      # Writing the Homebrew formulae is machine access to another repo, so
+      # it goes through a GitHub App rather than a personal token: minted
+      # per run, expiring in about an hour, owned by the account rather
+      # than by a person whose access it would otherwise inherit, and with
+      # no annual expiry to renew by hand. The app is installed on
+      # dlouwers/homebrew-tap alone, with Contents: write and nothing else.
+      #
+      # Separate from the read app on purpose — App permissions apply to
+      # every repo in an installation, so a shared app would silently give
+      # the design-system repo write access.
+      - name: Mint a token for the Homebrew tap
+        id: tap_token
+        if: vars.TAP_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: dlouwers
+          repositories: homebrew-tap
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
@@ -31,4 +54,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Falls back to the old PAT while the app is being adopted, so a
+          # release cannot break on a half-finished switch. Delete
+          # HOMEBREW_TAP_TOKEN once a release has gone out on the app.
+          HOMEBREW_TAP_TOKEN: ${{ steps.tap_token.outputs.token || secrets.HOMEBREW_TAP_TOKEN }}
