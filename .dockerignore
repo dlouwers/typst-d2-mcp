@@ -1,0 +1,4 @@
+
+# Documentation for the template packages; typst never reads it, and it
+# would otherwise land inside the package namespace directory.
+templates/README.md
