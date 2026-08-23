@@ -58,6 +58,20 @@ RUN curl -fsSL "https://github.com/typst/typst/releases/download/${TYPST_VERSION
       | tar -xJ -C /usr/local/bin --strip-components=1 \
  && typst --version
 
+# House document templates, resolved by typst as `@house/templates:0.1.0`.
+#
+# typst looks for local packages under $XDG_DATA_HOME/typst/packages/
+# <namespace>/<name>/<version>, so the directory layout *is* the import
+# path. The namespace is an owner slug: one baked-in owner today, per
+# organisation later, without the import path in anyone's document
+# changing.
+#
+# XDG_DATA_HOME is set to an image path so templates ship read-only with
+# the binary. typst's writable cache for @preview packages keeps using
+# $HOME, which the deployment points at its volume.
+COPY templates/ /usr/local/share/typst/packages/
+ENV XDG_DATA_HOME=/usr/local/share
+
 # Drop privileges. UID/GID match the convention used by distroless's
 # "nonroot" so swapping bases later is painless.
 RUN groupadd --system --gid 65532 nonroot \

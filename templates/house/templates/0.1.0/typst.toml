@@ -1,0 +1,7 @@
+[package]
+name = "templates"
+version = "0.1.0"
+entrypoint = "lib.typ"
+authors = ["typst-d2-mcp"]
+license = "MIT"
+description = "House document templates for typst-d2-mcp."

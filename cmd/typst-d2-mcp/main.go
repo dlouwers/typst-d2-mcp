@@ -234,6 +234,88 @@ VERIFYING THE RESULT:
   diagrams, or remove non-essential nodes. If you cannot view the PDF
   yourself, advise the user to inspect it.`
 
+// House templates live in a typst local package, so the model imports
+// them by name rather than by path — which matters because the compile
+// root is the staged file's temp directory, not the workspace.
+//
+// The namespace is an owner slug. There is one owner today, baked into
+// the image; when owners become organisations the storage moves, the
+// import path does not.
+const (
+	templateNamespace = "house"
+	templateName      = "templates"
+	templateVersion   = "0.1.0"
+)
+
+// typstDataDir mirrors how typst locates local packages.
+func typstDataDir() string {
+	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+		return d
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".local", "share")
+}
+
+// templateInstructions describes the house templates to the model, or
+// returns empty when the package is not installed.
+//
+// Advertising them unconditionally would be worse than not having them:
+// a stdio user has no package directory, so the model would confidently
+// write an import that cannot resolve and burn a compile finding out.
+func templateInstructions() string {
+	data := typstDataDir()
+	if data == "" {
+		return ""
+	}
+	pkg := filepath.Join(data, "typst", "packages",
+		templateNamespace, templateName, templateVersion)
+	if _, err := os.Stat(pkg); err != nil {
+		return ""
+	}
+	return fmt.Sprintf(`
+
+HOUSE TEMPLATES:
+  This server ships document templates. Prefer them over styling a
+  document yourself — they exist so that documents from different
+  people, written at different times, come out looking the same.
+
+    #import "@%[1]s/%[2]s:%[3]s": report, adr
+
+  report — owns the look; you write whatever content suits.
+
+    #show: report.with(
+      title: "Deployment architecture",
+      subtitle: "optional",
+      author: "optional",
+    )
+    = Overview
+    Body content, including #d2[...] blocks.
+
+  adr — an architecture decision record. Its sections are arguments
+  rather than headings, so every ADR carries the same ones:
+
+    #show: adr.with(
+      title: "Use a GitHub App for machine access",
+      number: 7,
+      status: "Accepted",
+      background: [Why this came up.],
+      decision: [What was decided.],
+      consequences: [What follows.],
+      alternatives: [Optional.],
+    )
+
+  Note "background", not "context": context is a reserved word in Typst.
+  The rendered heading still reads "Context".
+
+  Do not override the template's fonts, colours or page setup. A
+  document that restyles itself has opted out of the house style, which
+  is the one thing these templates exist to prevent.`,
+		templateNamespace, templateName, templateVersion)
+}
+
 func main() {
 	initLogger()
 
@@ -257,7 +339,7 @@ func main() {
 		serverVersion,
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
-		server.WithInstructions(serverInstructions),
+		server.WithInstructions(serverInstructions+templateInstructions()),
 	)
 
 	registerTools(s, factory, store)
