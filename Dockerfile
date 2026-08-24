@@ -66,11 +66,14 @@ RUN curl -fsSL "https://github.com/typst/typst/releases/download/${TYPST_VERSION
 # organisation later, without the import path in anyone's document
 # changing.
 #
-# XDG_DATA_HOME is set to an image path so templates ship read-only with
-# the binary. typst's writable cache for @preview packages keeps using
-# $HOME, which the deployment points at its volume.
-COPY templates/ /usr/local/share/typst/packages/
-ENV XDG_DATA_HOME=/usr/local/share
+# The templates are embedded in the binary (package ./templates) and
+# seeded onto the data volume on startup, so XDG_DATA_HOME points at the
+# volume rather than a read-only image path. That is what lets house style
+# change on the volume without an image rebuild (#63 step 2). The seed
+# target sits beside — not inside — the workspace tree, so the sweeper
+# never purges it. typst's writable @preview cache uses $HOME (XDG_CACHE_HOME),
+# unaffected by this.
+ENV XDG_DATA_HOME=/var/lib/typst-d2-mcp/data
 
 # Drop privileges. UID/GID match the convention used by distroless's
 # "nonroot" so swapping bases later is painless.

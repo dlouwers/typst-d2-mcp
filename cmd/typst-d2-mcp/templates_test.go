@@ -8,8 +8,9 @@ import (
 	"testing"
 )
 
-// repoTemplates is the package tree as it sits in the repo, which the
-// Dockerfile copies into the image's typst package directory.
+// repoTemplates is the package tree as it sits in the repo — the source
+// of truth that the templates package embeds and the server seeds onto
+// the data volume on startup.
 func repoTemplates(t *testing.T) string {
 	t.Helper()
 	dir, err := filepath.Abs(filepath.Join("..", "..", "templates"))
@@ -123,5 +124,73 @@ Trailing content.
 				t.Errorf("no PDF produced: %v", err)
 			}
 		})
+	}
+}
+
+// Seeding writes the embedded package tree onto the typst package path,
+// leaves an operator's edits alone, and produces a tree typst can resolve.
+func TestSeedBundledTemplates(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	pkg := filepath.Join(data, "typst", "packages", templateNamespace, templateName, templateVersion)
+
+	seedBundledTemplates()
+
+	for _, f := range []string{"typst.toml", "lib.typ"} {
+		if _, err := os.Stat(filepath.Join(pkg, f)); err != nil {
+			t.Fatalf("seed did not write %s: %v", f, err)
+		}
+	}
+
+	// The seeded content must match the repo source of truth byte-for-byte.
+	for _, f := range []string{"typst.toml", "lib.typ"} {
+		got, _ := os.ReadFile(filepath.Join(pkg, f))
+		want, err := os.ReadFile(filepath.Join(repoTemplates(t), templateNamespace, templateName, templateVersion, f))
+		if err != nil {
+			t.Fatalf("read repo %s: %v", f, err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("seeded %s differs from the repo source", f)
+		}
+	}
+
+	// Non-destructive: an operator edit on the volume survives a re-seed.
+	custom := []byte("// operator customised\n")
+	if err := os.WriteFile(filepath.Join(pkg, "lib.typ"), custom, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedBundledTemplates() // must not overwrite
+	if got, _ := os.ReadFile(filepath.Join(pkg, "lib.typ")); string(got) != string(custom) {
+		t.Error("re-seed clobbered an operator's customised template")
+	}
+}
+
+// A document compiles against the *seeded* package, proving the embedded
+// tree is a resolvable typst package and not just files on disk.
+func TestSeedBundledTemplates_Compiles(t *testing.T) {
+	if _, err := exec.LookPath("typst"); err != nil {
+		t.Skip("typst not installed")
+	}
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	seedBundledTemplates()
+
+	dir := t.TempDir()
+	in := filepath.Join(dir, "doc.typ")
+	out := filepath.Join(dir, "doc.pdf")
+	src := `#import "@house/templates:0.1.0": report
+#show: report.with(title: "Seeded")
+= Body
+`
+	if err := os.WriteFile(in, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("typst", "compile", in, out)
+	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+data)
+	if outBytes, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("compile against seeded package failed: %v\n%s", err, outBytes)
+	}
+	if info, err := os.Stat(out); err != nil || info.Size() == 0 {
+		t.Errorf("no PDF produced from seeded package: %v", err)
 	}
 }
