@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -25,6 +26,7 @@ import (
 	"github.com/dlouwers/typst-d2-mcp/internal/sweeper"
 	"github.com/dlouwers/typst-d2-mcp/internal/web"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
+	"github.com/dlouwers/typst-d2-mcp/templates"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yosida95/uritemplate/v3"
@@ -313,6 +315,57 @@ func typstDataDir() string {
 	return filepath.Join(home, ".local", "share")
 }
 
+// seedBundledTemplates copies the binary's embedded template packages onto
+// the typst package path (typstDataDir()/typst/packages) so a hosted
+// deployment resolves them from the data volume rather than a baked-in
+// image path — #63 step 2, "house style changes without an image rebuild".
+//
+// It writes only files that are absent, so it is safe to run on every
+// startup and never clobbers a template an operator has customised on the
+// volume (bump the package version to ship a change). The target sits under
+// XDG_DATA_HOME, a sibling of the workspace root, so the sweeper — which
+// only walks TYPST_D2_MCP_WORKSPACE — never purges it.
+func seedBundledTemplates() {
+	data := typstDataDir()
+	if data == "" {
+		slog.Warn("no data dir resolved; skipping template seed")
+		return
+	}
+	pkgRoot := filepath.Join(data, "typst", "packages")
+	var seeded int
+	err := fs.WalkDir(templates.FS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		dst := filepath.Join(pkgRoot, path) // path e.g. house/templates/0.1.0/lib.typ
+		if _, statErr := os.Stat(dst); statErr == nil {
+			return nil // already present — never overwrite
+		}
+		content, readErr := templates.FS.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("read embedded %s: %w", path, readErr)
+		}
+		if mkErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkErr != nil {
+			return fmt.Errorf("create %s: %w", filepath.Dir(dst), mkErr)
+		}
+		if wErr := os.WriteFile(dst, content, 0o644); wErr != nil {
+			return fmt.Errorf("write %s: %w", dst, wErr)
+		}
+		seeded++
+		return nil
+	})
+	if err != nil {
+		slog.Error("template seed failed", "err", err, "dir", pkgRoot)
+		return
+	}
+	if seeded > 0 {
+		slog.Info("seeded bundled templates onto the data volume", "files", seeded, "dir", pkgRoot)
+	}
+}
+
 // templateInstructions describes the house templates to the model, or
 // returns empty when the package is not installed.
 //
@@ -386,6 +439,15 @@ func main() {
 	}
 	if closer != nil {
 		defer closer()
+	}
+
+	// Hosted mode seeds the house templates onto the data volume before the
+	// server advertises them, so a fresh volume resolves them and an
+	// operator can edit them there without an image rebuild (#63 step 2).
+	// Local stdio users are left untouched: they only see templates they
+	// installed themselves.
+	if isHTTPTransport() {
+		seedBundledTemplates()
 	}
 
 	s := server.NewMCPServer(
