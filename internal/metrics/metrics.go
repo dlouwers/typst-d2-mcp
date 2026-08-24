@@ -24,6 +24,7 @@ const (
 	ResultQuotaExceeded = "quota_exceeded"
 	ResultTimeout       = "timeout"
 	ResultTooLarge      = "too_large"
+	ResultOverBudget    = "over_budget"
 	ResultDecodeError   = "decode_error"
 	ResultNotFound      = "not_found"
 )
@@ -50,8 +51,10 @@ var (
 
 	// PutFileTotal counts every put_file invocation, labelled by
 	// result. ok = file written; too_large = exceeded
-	// TYPST_D2_MCP_MAX_INPUT_BYTES; decode_error = base64 input
-	// malformed; fail = any other write/resolve failure.
+	// TYPST_D2_MCP_MAX_INPUT_BYTES; over_budget = would exceed the
+	// workspace budget (TYPST_D2_MCP_WORKSPACE_BUDGET_BYTES);
+	// decode_error = base64 input malformed; fail = any other
+	// write/resolve failure.
 	PutFileTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "typst_d2_mcp_put_file_total",
 		Help: "Total put_file invocations by terminal result.",
