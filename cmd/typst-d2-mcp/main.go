@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -840,6 +841,26 @@ relative and stay within the workspace (traversal is rejected).`,
 		),
 	)
 	s.AddTool(putFileTool, handlePutFile(factory))
+
+	workspaceInfoTool := mcp.NewTool("workspace_info",
+		mcp.WithDescription(fmt.Sprintf(`Report the active workspace's storage limits and current usage.
+
+Call this before pushing a large asset with put_file to check what will
+fit. Takes no arguments; returns JSON:
+  - per_call_limit_bytes / per_call_limit_human: the maximum size of a
+    single put_file payload, measured on DECODED bytes (see put_file).
+    Raise %s on the server to change it.
+  - usage_tracked: true in scoped/hosted mode, where the workspace is a
+    bounded per-tenant directory; false in local stdio mode, where the
+    workspace is the shared filesystem and has no size worth reporting.
+  - used_bytes / used_human: total bytes currently stored in the
+    workspace, measured live at call time. Present only when
+    usage_tracked is true.
+
+A cumulative workspace budget is not yet enforced; today only the
+per-call limit bounds writes.`, envMaxInputBytes)),
+	)
+	s.AddTool(workspaceInfoTool, handleWorkspaceInfo(factory))
 }
 
 func registerResources(s *server.MCPServer, factory workspace.Factory) {
@@ -1159,6 +1180,46 @@ func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 		}
 		metrics.PutFileTotal.WithLabelValues(metrics.ResultOK).Inc()
 		return mcp.NewToolResultText(fmt.Sprintf("wrote %d bytes to %s", len(data), path)), nil
+	}
+}
+
+// workspaceInfo is the JSON payload returned by the workspace_info tool.
+// UsedBytes/UsedHuman are pointers/omitempty so they are absent (not a
+// misleading zero) in local mode, where usage is not tracked.
+type workspaceInfo struct {
+	PerCallLimitBytes int64  `json:"per_call_limit_bytes"`
+	PerCallLimitHuman string `json:"per_call_limit_human"`
+	UsageTracked      bool   `json:"usage_tracked"`
+	UsedBytes         *int64 `json:"used_bytes,omitempty"`
+	UsedHuman         string `json:"used_human,omitempty"`
+}
+
+func handleWorkspaceInfo(factory workspace.Factory) server.ToolHandlerFunc {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		resolver, err := resolverFor(ctx, factory)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("workspace setup", err), nil
+		}
+		limit := maxInputBytes()
+		used, tracked, err := workspace.Usage(resolver)
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("measure workspace", err), nil
+		}
+		info := workspaceInfo{
+			PerCallLimitBytes: limit,
+			PerCallLimitHuman: humanBytes(limit),
+			UsageTracked:      tracked,
+		}
+		if tracked {
+			u := used
+			info.UsedBytes = &u
+			info.UsedHuman = humanBytes(used)
+		}
+		payload, err := json.MarshalIndent(info, "", "  ")
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("encode workspace info", err), nil
+		}
+		return mcp.NewToolResultText(string(payload)), nil
 	}
 }
 

@@ -9,7 +9,9 @@
 package workspace
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,6 +115,70 @@ func (s *ScopedFS) Resolve(path string) (string, error) {
 		return "", fmt.Errorf("path escapes workspace: %s", path)
 	}
 	return cleaned, nil
+}
+
+// WorkspaceRoot returns the absolute directory that bounds this resolver,
+// satisfying Bounded. It is the measurable extent of a scoped workspace.
+func (s *ScopedFS) WorkspaceRoot() string { return s.Root }
+
+// Bounded is implemented by resolvers whose workspace is confined to a
+// single on-disk root, making its total size a meaningful quantity.
+// LocalFS deliberately does not implement it: in stdio mode the
+// "workspace" is the shared filesystem and has no size worth reporting.
+type Bounded interface {
+	WorkspaceRoot() string
+}
+
+// Usage reports the total bytes stored in r's workspace and whether that
+// number is meaningful. Bounded resolvers (ScopedFS) return their measured
+// size; unbounded ones (LocalFS) return tracked=false with zero bytes.
+func Usage(r Resolver) (bytes int64, tracked bool, err error) {
+	b, ok := r.(Bounded)
+	if !ok {
+		return 0, false, nil
+	}
+	total, err := DirBytes(b.WorkspaceRoot())
+	if err != nil {
+		return 0, true, err
+	}
+	return total, true, nil
+}
+
+// DirBytes returns the summed size of the regular files under dir,
+// walking recursively. Symlinks and other irregular entries are skipped
+// (their size is meaningless and WalkDir does not follow them), matching
+// how the sweeper measures a workspace. A dir that does not exist counts
+// as zero: a user who has written nothing yet has an empty workspace, not
+// an error.
+func DirBytes(dir string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil // vanished mid-walk (or absent root); skip
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		total += info.Size()
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return total, err
+	}
+	return total, nil
 }
 
 // Factory picks the workspace.Resolver for a given identity. It lets
