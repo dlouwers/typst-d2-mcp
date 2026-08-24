@@ -29,6 +29,29 @@ func TestDurationEnv(t *testing.T) {
 	}
 }
 
+func TestHumanBytes(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int64
+		want string
+	}{
+		{"zero", 0, "0 B"},
+		{"sub-unit", 512, "512 B"},
+		{"one KiB", 1024, "1.0 KiB"},
+		{"one and a half KiB", 1536, "1.5 KiB"},
+		{"default input limit", 1 << 20, "1.0 MiB"},
+		{"the reported image decoded", 982791, "959.8 KiB"},
+		{"gibibyte", 1 << 30, "1.0 GiB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := humanBytes(tt.in); got != tt.want {
+				t.Errorf("humanBytes(%d) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestInt64Env(t *testing.T) {
 	const key = "TYPST_D2_MCP_TEST_INT"
 	tests := []struct {

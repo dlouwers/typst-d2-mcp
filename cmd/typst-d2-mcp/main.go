@@ -107,6 +107,23 @@ func maxInputBytes() int64 {
 	return int64Env(envMaxInputBytes, defaultMaxInputBytes)
 }
 
+// humanBytes renders a byte count in binary units for human-facing text
+// (the put_file description and its too-large error). Mirrors the admin
+// UI's bytesLabel; kept here to avoid importing internal/web into the
+// command.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGT"[exp])
+}
+
 // quotaPerDay is the per-user UTC-day ceiling on successful compile
 // attempts; 0 disables the check. Only enforced for non-anonymous
 // identities (i.e. authenticated users), so self-hosted single-tenant
@@ -787,8 +804,9 @@ split it, simplify it, or switch to 'direction: down'.`),
 	)
 	s.AddTool(compileTypstTool, handleCompileTypst(factory, store))
 
+	inputLimit := maxInputBytes()
 	putFileTool := mcp.NewTool("put_file",
-		mcp.WithDescription(`Write a file into the server's active workspace.
+		mcp.WithDescription(fmt.Sprintf(`Write a file into the server's active workspace.
 
 Use this only when your runtime cannot directly write to the target
 filesystem — for example when talking to a hosted MCP server over HTTP.
@@ -796,9 +814,19 @@ When running against a local stdio server, prefer your host's filesystem
 tools (Write/Edit) so you don't ship the file content through this
 channel.
 
+Size limit: content must be at most %d bytes (%s) measured AFTER decoding.
+For base64, that bound is the decoded size — roughly 3/4 of the string you
+pass — NOT the length of the base64 string, so judge against the decoded
+size, not the encoded one. Raise %s on the server to lift the ceiling.
+Pushing a binary asset that fits under this limit — e.g. an image a Typst
+document references, which must exist in the workspace before you compile —
+is expected and supported: do it rather than giving up or falling back to a
+local toolchain, which a hosted deployment may not have.
+
 The path is resolved through the server's active workspace. In local
 mode any path is accepted; in scoped/hosted mode the path must be
-relative and stay within the workspace (traversal is rejected).`),
+relative and stay within the workspace (traversal is rejected).`,
+			inputLimit, humanBytes(inputLimit), envMaxInputBytes)),
 		mcp.WithString("path",
 			mcp.Required(),
 			mcp.Description("Destination path. Workspace-relative in scoped/hosted mode; any path in local mode."),
@@ -1120,8 +1148,8 @@ func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 		if limit := maxInputBytes(); int64(len(data)) > limit {
 			metrics.PutFileTotal.WithLabelValues(metrics.ResultTooLarge).Inc()
 			return mcp.NewToolResultError(fmt.Sprintf(
-				"content too large: %d bytes (limit %d, set %s to raise)",
-				len(data), limit, envMaxInputBytes,
+				"content too large: %d bytes decoded (%s) exceeds the limit of %d bytes (%s); set %s on the server to raise it",
+				len(data), humanBytes(int64(len(data))), limit, humanBytes(limit), envMaxInputBytes,
 			)), nil
 		}
 
