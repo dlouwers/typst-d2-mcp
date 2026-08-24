@@ -86,7 +86,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	s := &Server{cfg: cfg, pages: map[string]*template.Template{}}
 
-	for _, page := range []string{"users", "audit", "login"} {
+	for _, page := range []string{"users", "orgs", "audit", "login"} {
 		tmpl, err := template.New("").Funcs(templateFuncs()).ParseFS(templatesFS,
 			"templates/base.tmpl", "templates/partials.tmpl", "templates/"+page+".tmpl")
 		if err != nil {
@@ -123,17 +123,22 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServerFS(static)))
 
 	mux.Handle("GET /admin/{$}", s.requireAdmin(http.HandlerFunc(s.handleUsers)))
+	mux.Handle("GET /admin/orgs", s.requireAdmin(http.HandlerFunc(s.handleOrgs)))
 	mux.Handle("GET /admin/audit", s.requireAdmin(http.HandlerFunc(s.handleAudit)))
 	mux.Handle("POST /admin/logout", s.requireAdmin(http.HandlerFunc(s.handleLogout)))
 
 	for path, handler := range map[string]http.HandlerFunc{
-		"POST /admin/invite":      s.handleInvite,
-		"POST /admin/quota":       s.handleSetQuota,
-		"POST /admin/budget":      s.handleSetBudget,
-		"POST /admin/reset":       s.handleResetToday,
-		"POST /admin/revoke":      s.handleRevokeAccess,
-		"POST /admin/revoke-keys": s.handleRevokeKeys,
-		"POST /admin/delete":      s.handleDeleteUser,
+		"POST /admin/invite":              s.handleInvite,
+		"POST /admin/quota":               s.handleSetQuota,
+		"POST /admin/budget":              s.handleSetBudget,
+		"POST /admin/reset":               s.handleResetToday,
+		"POST /admin/revoke":              s.handleRevokeAccess,
+		"POST /admin/revoke-keys":         s.handleRevokeKeys,
+		"POST /admin/delete":              s.handleDeleteUser,
+		"POST /admin/orgs/create":         s.handleCreateOrg,
+		"POST /admin/orgs/delete":         s.handleDeleteOrg,
+		"POST /admin/orgs/members/add":    s.handleAddOrgMember,
+		"POST /admin/orgs/members/remove": s.handleRemoveOrgMember,
 	} {
 		mux.Handle(path, s.requireAdmin(handler))
 	}

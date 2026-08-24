@@ -181,6 +181,39 @@ var migrations = []migration{
 )`,
 		},
 	},
+	{
+		revision: 7,
+		name:     "owners and organisation membership",
+		stmts: []string{
+			// An owner is a user or an organisation; its slug IS the typst
+			// package namespace (@<slug>/...), so it is the primary key and
+			// globally unique across both kinds. Templates belong to an
+			// owner, not a user. Rung 3 of #63 creates org owners via the
+			// admin UI; personal (user) owners and compile-time resolution
+			// land in rung 4. created_by records the admin who made it.
+			`CREATE TABLE IF NOT EXISTS owners (
+  slug         TEXT PRIMARY KEY,
+  kind         TEXT NOT NULL CHECK (kind IN ('user','org')),
+  display_name TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by   TEXT NOT NULL DEFAULT ''
+)`,
+			// Many-to-many from the start: a user may belong to several
+			// organisations and vice versa. A users.org_id column would be
+			// a migration away from wrong. user_id is the identity key
+			// ('gh:<github_id>'), matching workspace_usage / compiles.
+			`CREATE TABLE IF NOT EXISTS org_members (
+  org_slug   TEXT NOT NULL REFERENCES owners(slug) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (org_slug, user_id)
+)`,
+			// Resolving "which organisations does this user belong to?" is
+			// the hot path for rung 4's compile-time namespace resolution.
+			`CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id)`,
+		},
+	},
 }
 
 // latestRevision is the highest revision this binary knows how to apply.

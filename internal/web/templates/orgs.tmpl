@@ -1,0 +1,21 @@
+{{define "content"}}
+<sl-card padding="lg">
+  <h1 slot="header">Organisations</h1>
+  <p class="muted">An organisation is a template owner: its slug is the
+  namespace people import as <code>@slug/…</code>. Membership decides whose
+  documents may resolve it (compile-time resolution lands later — see #63).
+  Workspaces and quota stay per-user.</p>
+
+  <form method="post" action="/admin/orgs/create" hx-post="/admin/orgs/create" hx-target="#orgs" hx-swap="outerHTML" class="row">
+    <label>Slug
+      <input type="text" name="slug" inputmode="text" placeholder="acme" autocomplete="off" required>
+    </label>
+    <label>Display name
+      <input type="text" name="display_name" placeholder="Acme Corp" autocomplete="off">
+    </label>
+    <button type="submit" class="btn btn-primary btn-sm">Create organisation</button>
+  </form>
+</sl-card>
+
+{{template "orgs-list" .}}
+{{end}}

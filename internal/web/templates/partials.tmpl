@@ -133,3 +133,59 @@
   </table>
 </sl-table>
 {{end}}
+
+{{/*
+  The organisations list, in partials so both the full page render and the
+  htmx action responses can emit it. Native form controls throughout, so
+  every action still works with JavaScript off — same discipline as the
+  users table above.
+*/}}
+{{define "orgs-list"}}
+<div id="orgs">
+{{range .Orgs}}
+  <sl-card padding="lg" class="org">
+    <div slot="header" class="org-head">
+      <span><code>@{{.Slug}}</code>{{if .DisplayName}} — {{.DisplayName}}{{end}}</span>
+      <sl-badge variant="info">{{.MemberCount}} member{{if ne .MemberCount 1}}s{{end}}</sl-badge>
+    </div>
+
+    {{$slug := .Slug}}
+    <table class="members">
+      <tbody>
+      {{range .Members}}
+        <tr>
+          <td><strong>{{.GitHubLogin}}</strong>{{if .Email}} <span class="muted">{{.Email}}</span>{{end}}</td>
+          <td class="num">
+            <form method="post" action="/admin/orgs/members/remove" hx-post="/admin/orgs/members/remove" hx-target="#orgs" hx-swap="outerHTML">
+              <input type="hidden" name="slug" value="{{$slug}}">
+              <input type="hidden" name="login" value="{{.GitHubLogin}}">
+              <button type="submit" class="btn btn-sm">Remove</button>
+            </form>
+          </td>
+        </tr>
+      {{else}}
+        <tr><td colspan="2" class="muted">No members yet.</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+
+    <div class="org-actions">
+      <form method="post" action="/admin/orgs/members/add" hx-post="/admin/orgs/members/add" hx-target="#orgs" hx-swap="outerHTML" class="row">
+        <input type="hidden" name="slug" value="{{.Slug}}">
+        <label>Add member
+          <input type="text" name="login" placeholder="github-login" autocomplete="off" required>
+        </label>
+        <button type="submit" class="btn btn-sm">Add</button>
+      </form>
+
+      <form method="post" action="/admin/orgs/delete" hx-post="/admin/orgs/delete" hx-target="#orgs" hx-swap="outerHTML" class="danger">
+        <input type="hidden" name="slug" value="{{.Slug}}">
+        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+      </form>
+    </div>
+  </sl-card>
+{{else}}
+  <sl-card padding="lg"><p class="muted">No organisations yet. Create one above.</p></sl-card>
+{{end}}
+</div>
+{{end}}
