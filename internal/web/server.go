@@ -45,6 +45,11 @@ type Config struct {
 	// when they have no override.
 	QuotaDefault func() int
 
+	// WorkspaceBudgetDefault reports the deployment-wide storage budget
+	// (bytes) a workspace inherits when it has no override. 0 means no
+	// cumulative budget.
+	WorkspaceBudgetDefault func() int64
+
 	// Build identifies the running binary in the admin UI's banner.
 	Build BuildInfo
 }
@@ -75,6 +80,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.QuotaDefault == nil {
 		cfg.QuotaDefault = func() int { return 0 }
+	}
+	if cfg.WorkspaceBudgetDefault == nil {
+		cfg.WorkspaceBudgetDefault = func() int64 { return 0 }
 	}
 	s := &Server{cfg: cfg, pages: map[string]*template.Template{}}
 
@@ -121,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	for path, handler := range map[string]http.HandlerFunc{
 		"POST /admin/invite":      s.handleInvite,
 		"POST /admin/quota":       s.handleSetQuota,
+		"POST /admin/budget":      s.handleSetBudget,
 		"POST /admin/reset":       s.handleResetToday,
 		"POST /admin/revoke":      s.handleRevokeAccess,
 		"POST /admin/revoke-keys": s.handleRevokeKeys,
@@ -170,10 +179,39 @@ func templateFuncs() template.FuncMap {
 		"quotaLabel":  quotaLabel,
 		"quotaNumber": quotaNumber,
 		"quotaValue":  quotaValue,
+		"budgetLabel": budgetLabel,
+		"budgetValue": budgetValue,
 		"bytesLabel":  bytesLabel,
 		"agoLabel":    agoLabel,
 		"deref":       func(n *int) int { return *n },
+		"deref64":     func(n *int64) int64 { return *n },
 	}
+}
+
+// budgetLabel renders a workspace's effective storage budget for display.
+func budgetLabel(override *int64, def int64) string {
+	if override == nil {
+		return fmt.Sprintf("default (%s)", budgetNumber(def))
+	}
+	return budgetNumber(*override)
+}
+
+func budgetNumber(n int64) string {
+	if n <= 0 {
+		return "unlimited"
+	}
+	return bytesLabel(&n)
+}
+
+// budgetValue is the number of bytes to prefill the "fixed" edit field
+// with. An override of 0 means unlimited, not a fixed budget of zero, so
+// it prefills nothing — see quotaValue for why an invalid number input
+// would otherwise block the form.
+func budgetValue(override *int64) string {
+	if override == nil || *override == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", *override)
 }
 
 // quotaLabel renders a user's effective quota for display.

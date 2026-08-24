@@ -47,7 +47,7 @@ test.describe("without javascript", () => {
     const row = page.locator("tr", { hasText: "nojsquota" });
     // <details> is native HTML; clicking the summary works with no JS.
     await row.locator("summary").click();
-    await row.locator('input[name="mode"][value="unlimited"]').check();
+    await row.locator('form[action="/admin/quota"] input[name="mode"][value="unlimited"]').check();
     await row.getByRole("button", { name: "Save quota" }).click();
 
     await expect(page.locator("#flash")).toContainText("Quota updated");

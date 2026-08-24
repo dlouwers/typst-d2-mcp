@@ -376,6 +376,64 @@ func TestQuota_OnPendingInviteExplains(t *testing.T) {
 	}
 }
 
+func TestBudget_ModesApply(t *testing.T) {
+	f := newFixture(t)
+	f.seedSignedIn(t, 42, "octocat")
+	ctx := t.Context()
+
+	// Fixed (bytes).
+	f.do(t, f.as(t, "dlouwers", http.MethodPost, "/admin/budget",
+		url.Values{"login": {"octocat"}, "mode": {"fixed"}, "value": {"52428800"}}))
+	if got, _ := f.store.EffectiveWorkspaceBudget(ctx, "gh:42", 1); got != 52428800 {
+		t.Errorf("budget = %d, want 52428800", got)
+	}
+
+	// Unlimited.
+	f.do(t, f.as(t, "dlouwers", http.MethodPost, "/admin/budget",
+		url.Values{"login": {"octocat"}, "mode": {"unlimited"}}))
+	if got, _ := f.store.EffectiveWorkspaceBudget(ctx, "gh:42", 1); got != 0 {
+		t.Errorf("budget = %d, want 0 (unlimited)", got)
+	}
+
+	// Back to the deployment default.
+	f.do(t, f.as(t, "dlouwers", http.MethodPost, "/admin/budget",
+		url.Values{"login": {"octocat"}, "mode": {"default"}}))
+	if got, _ := f.store.EffectiveWorkspaceBudget(ctx, "gh:42", 4096); got != 4096 {
+		t.Errorf("budget = %d, want the default 4096", got)
+	}
+}
+
+func TestBudget_RejectsNonsenseValue(t *testing.T) {
+	f := newFixture(t)
+	f.seedSignedIn(t, 42, "octocat")
+
+	for _, value := range []string{"", "0", "-3", "many"} {
+		rec := f.do(t, f.as(t, "dlouwers", http.MethodPost, "/admin/budget",
+			url.Values{"login": {"octocat"}, "mode": {"fixed"}, "value": {value}}))
+		loc, _ := url.Parse(rec.Header().Get("Location"))
+		if loc.Query().Get("level") != string(flashError) {
+			t.Errorf("value %q accepted, want a validation error", value)
+		}
+	}
+	if got, _ := f.store.EffectiveWorkspaceBudget(t.Context(), "gh:42", 1); got != 1 {
+		t.Errorf("budget = %d, want the untouched default 1", got)
+	}
+}
+
+func TestBudget_OnPendingInviteExplains(t *testing.T) {
+	f := newFixture(t)
+	if err := f.store.CreateInvite(t.Context(), "dlouwers", "newbie"); err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	rec := f.do(t, f.as(t, "dlouwers", http.MethodPost, "/admin/budget",
+		url.Values{"login": {"newbie"}, "mode": {"unlimited"}}))
+
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	if !strings.Contains(loc.Query().Get("flash"), "has not signed in yet") {
+		t.Errorf("flash = %q, want an explanation", loc.Query().Get("flash"))
+	}
+}
+
 func TestResetToday_ClearsCounter(t *testing.T) {
 	f := newFixture(t)
 	f.seedSignedIn(t, 42, "octocat")

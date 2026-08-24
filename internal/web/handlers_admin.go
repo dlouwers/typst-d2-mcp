@@ -28,9 +28,10 @@ type pageVM struct {
 // usersVM is the view model for the user list.
 type usersVM struct {
 	pageVM
-	Rows         []authdb.AdminUserRow
-	DefaultQuota int
-	PublicURL    string
+	Rows          []authdb.AdminUserRow
+	DefaultQuota  int
+	DefaultBudget int64
+	PublicURL     string
 }
 
 // auditVM is the view model for the audit log.
@@ -53,9 +54,10 @@ func (s *Server) usersViewModel(r *http.Request) (usersVM, error) {
 			Admin: adminLogin(r.Context()),
 			Build: s.cfg.Build,
 		},
-		Rows:         rows,
-		DefaultQuota: s.cfg.QuotaDefault(),
-		PublicURL:    strings.TrimRight(s.cfg.GitHub.Cfg.PublicURL, "/"),
+		Rows:          rows,
+		DefaultQuota:  s.cfg.QuotaDefault(),
+		DefaultBudget: s.cfg.WorkspaceBudgetDefault(),
+		PublicURL:     strings.TrimRight(s.cfg.GitHub.Cfg.PublicURL, "/"),
 	}, nil
 }
 
@@ -181,6 +183,48 @@ func (s *Server) handleSetQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("admin: quota set", "actor", adminLogin(r.Context()), "target", login)
 	s.respondAction(w, r, flashNotice, "Quota updated for "+login)
+}
+
+// handleSetBudget mirrors handleSetQuota for the per-workspace storage
+// budget: three explicit modes so "unlimited" and "inherit the default"
+// are choices rather than magic numbers, and a byte count for "fixed".
+func (s *Server) handleSetBudget(w http.ResponseWriter, r *http.Request) {
+	login, err := formLogin(r)
+	if err != nil {
+		s.respondAction(w, r, flashError, err.Error())
+		return
+	}
+	var budget *int64
+	switch mode := r.PostFormValue("mode"); mode {
+	case "default":
+		budget = nil
+	case "unlimited":
+		zero := int64(0)
+		budget = &zero
+	case "fixed":
+		n, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("value")), 10, 64)
+		if err != nil || n < 1 {
+			s.respondAction(w, r, flashError, "budget must be a whole number of bytes (1 or more)")
+			return
+		}
+		budget = &n
+	default:
+		s.respondAction(w, r, flashError, "unknown budget mode "+mode)
+		return
+	}
+
+	if err := s.cfg.Store.SetWorkspaceBudget(r.Context(), adminLogin(r.Context()), login, budget); err != nil {
+		if errors.Is(err, authdb.ErrNoSuchUser) {
+			s.respondAction(w, r, flashError,
+				login+" has not signed in yet, so there is no workspace to set a budget on")
+			return
+		}
+		slog.Error("admin: set budget", "target", login, "err", err)
+		s.respondAction(w, r, flashError, "could not set budget for "+login)
+		return
+	}
+	slog.Info("admin: budget set", "actor", adminLogin(r.Context()), "target", login)
+	s.respondAction(w, r, flashNotice, "Storage budget updated for "+login)
 }
 
 func (s *Server) handleResetToday(w http.ResponseWriter, r *http.Request) {

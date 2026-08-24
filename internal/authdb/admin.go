@@ -35,6 +35,7 @@ const (
 	ActionRevoke     = "revoke_access"
 	ActionRevokeKeys = "revoke_keys"
 	ActionSetQuota   = "set_quota"
+	ActionSetBudget  = "set_budget"
 	ActionResetQuota = "reset_today"
 	ActionDeleteUser = "delete_user"
 )
@@ -63,6 +64,11 @@ type AdminUserRow struct {
 	// QuotaOverride is nil when the user inherits the deployment
 	// default, 0 for unlimited, N for N compiles per UTC day.
 	QuotaOverride *int
+
+	// BudgetOverride is the workspace storage budget override in bytes:
+	// nil inherits the deployment default, 0 is unlimited, N caps at N
+	// bytes. Keyed by the workspace, not the users row (see budget.go).
+	BudgetOverride *int64
 
 	UsedToday  int
 	KeyCount   int
@@ -108,7 +114,8 @@ SELECT
   (SELECT c.count FROM compiles c
      WHERE c.user_id = 'gh:' || u.github_id AND c.utc_date = ?)     AS used_today,
   (SELECT w.bytes       FROM workspace_usage w WHERE w.user_id = 'gh:' || u.github_id),
-  (SELECT w.computed_at FROM workspace_usage w WHERE w.user_id = 'gh:' || u.github_id)
+  (SELECT w.computed_at FROM workspace_usage w WHERE w.user_id = 'gh:' || u.github_id),
+  (SELECT b.budget_bytes FROM workspace_budgets b WHERE b.user_id = 'gh:' || u.github_id)
 FROM users u
 `, utcDate)
 	if err != nil {
@@ -126,15 +133,20 @@ FROM users u
 			usedToday  sql.NullInt64
 			bytes      sql.NullInt64
 			measuredAt sql.NullTime
+			budget     sql.NullInt64
 		)
 		if err := rows.Scan(&r.UserID, &r.GitHubLogin, &r.Email, &quota,
-			&r.KeyCount, &lastUsed, &usedToday, &bytes, &measuredAt); err != nil {
+			&r.KeyCount, &lastUsed, &usedToday, &bytes, &measuredAt, &budget); err != nil {
 			return nil, fmt.Errorf("scan admin user: %w", err)
 		}
 		r.SignedIn = true
 		if quota.Valid {
 			q := int(quota.Int64)
 			r.QuotaOverride = &q
+		}
+		if budget.Valid {
+			b := budget.Int64
+			r.BudgetOverride = &b
 		}
 		if lastUsed.Valid {
 			t := lastUsed.Time
@@ -313,7 +325,8 @@ DELETE FROM api_keys
 
 // DeleteUser removes every trace of a user from the database: their
 // users row (cascading to api_keys), any invite, their download links,
-// their compile counters, and their cached workspace size. It returns
+// their compile counters, their cached workspace size, and their
+// workspace budget override. It returns
 // the identity key ("gh:42") so the caller can delete the matching
 // workspace directory; empty means the login existed only as an invite
 // and has no workspace.
@@ -347,9 +360,10 @@ func (s *Store) DeleteUser(ctx context.Context, actor, login string) (string, er
 
 		if userID != "" {
 			for _, stmt := range []struct{ sql, what string }{
-				{`DELETE FROM pdf_links       WHERE user_id = ?`, "pdf links"},
-				{`DELETE FROM compiles        WHERE user_id = ?`, "compiles"},
-				{`DELETE FROM workspace_usage WHERE user_id = ?`, "workspace usage"},
+				{`DELETE FROM pdf_links         WHERE user_id = ?`, "pdf links"},
+				{`DELETE FROM compiles          WHERE user_id = ?`, "compiles"},
+				{`DELETE FROM workspace_usage   WHERE user_id = ?`, "workspace usage"},
+				{`DELETE FROM workspace_budgets WHERE user_id = ?`, "workspace budget"},
 			} {
 				if _, err := tx.ExecContext(ctx, stmt.sql, userID); err != nil {
 					return fmt.Errorf("delete %s: %w", stmt.what, err)

@@ -62,6 +62,20 @@ export function quotaFor(login: string): string {
   ).trim();
 }
 
+/**
+ * A user's workspace storage budget override in bytes, or 'NULL' when the
+ * workspace inherits the deployment default. Read from workspace_budgets,
+ * which is keyed by the tenant/workspace id ('gh:'||github_id).
+ */
+export function budgetFor(login: string): string {
+  return sql(
+    `SELECT IFNULL(CAST(b.budget_bytes AS TEXT), 'NULL')
+       FROM users u
+       LEFT JOIN workspace_budgets b ON b.user_id = 'gh:' || u.github_id
+      WHERE u.github_login = '${login}'`,
+  ).trim();
+}
+
 export function auditActions(): string[] {
   return sql(`SELECT action FROM admin_audit ORDER BY id`)
     .split("\n")

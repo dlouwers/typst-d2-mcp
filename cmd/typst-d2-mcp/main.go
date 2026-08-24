@@ -693,11 +693,12 @@ func newAdminUI(gh *auth.GitHub, store *authdb.Store, factory workspace.Factory)
 	}
 
 	return web.New(web.Config{
-		Store:         store,
-		GitHub:        gh,
-		Sessions:      web.NewSessionCodec(key, 12*time.Hour, secure),
-		WorkspaceRoot: root,
-		QuotaDefault:  quotaPerDay,
+		Store:                  store,
+		GitHub:                 gh,
+		Sessions:               web.NewSessionCodec(key, 12*time.Hour, secure),
+		WorkspaceRoot:          root,
+		QuotaDefault:           quotaPerDay,
+		WorkspaceBudgetDefault: workspaceBudgetBytes,
 		Build: web.BuildInfo{
 			Environment:    os.Getenv(envEnvironment),
 			Version:        serverVersion,
@@ -857,7 +858,7 @@ relative and stay within the workspace (traversal is rejected).`,
 			mcp.Description(`"utf8" (default) for text or "base64" for binary data.`),
 		),
 	)
-	s.AddTool(putFileTool, handlePutFile(factory))
+	s.AddTool(putFileTool, handlePutFile(factory, store))
 
 	workspaceInfoTool := mcp.NewTool("workspace_info",
 		mcp.WithDescription(fmt.Sprintf(`Report the active workspace's storage limits and current usage.
@@ -882,7 +883,7 @@ fit. Takes no arguments; returns JSON:
 When budget_bytes is present, a put_file that would push used_bytes over
 it is rejected — check available_bytes before pushing a large asset.`, envMaxInputBytes)),
 	)
-	s.AddTool(workspaceInfoTool, handleWorkspaceInfo(factory))
+	s.AddTool(workspaceInfoTool, handleWorkspaceInfo(factory, store))
 }
 
 func registerResources(s *server.MCPServer, factory workspace.Factory) {
@@ -1156,7 +1157,7 @@ func handlePDFDownload(factory workspace.Factory, store *authdb.Store) http.Hand
 	})
 }
 
-func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
+func handlePutFile(factory workspace.Factory, store *authdb.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		path, err := request.RequireString("path")
 		if err != nil {
@@ -1196,9 +1197,11 @@ func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 			)), nil
 		}
 
-		// Cumulative workspace budget. Inert when unset (0) or in local
-		// mode, where the workspace has no bounded size (tracked=false).
-		if budget := workspaceBudgetBytes(); budget > 0 {
+		// Cumulative workspace budget (per-workspace override, else the env
+		// default). Inert when unset (0) or in local mode, where the
+		// workspace has no bounded size (tracked=false).
+		id, _ := identity.FromContext(ctx)
+		if budget := effectiveWorkspaceBudget(ctx, store, id); budget > 0 {
 			projected, tracked, err := projectedUsage(resolver, path, int64(len(data)))
 			if err != nil {
 				metrics.PutFileTotal.WithLabelValues(metrics.ResultFail).Inc()
@@ -1221,6 +1224,24 @@ func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 		metrics.PutFileTotal.WithLabelValues(metrics.ResultOK).Inc()
 		return mcp.NewToolResultText(fmt.Sprintf("wrote %d bytes to %s", len(data), path)), nil
 	}
+}
+
+// effectiveWorkspaceBudget resolves the byte budget for the request: the
+// per-workspace override when a store is present and the caller is a real
+// tenant, otherwise the env default. It never fails the request — a store
+// read error falls back to the default rather than blocking the write.
+func effectiveWorkspaceBudget(ctx context.Context, store *authdb.Store, id identity.Identity) int64 {
+	def := workspaceBudgetBytes()
+	if store == nil || id.IsAnonymous() {
+		return def
+	}
+	b, err := store.EffectiveWorkspaceBudget(ctx, id.UserID, def)
+	if err != nil {
+		slog.Warn("workspace budget override lookup failed; using default",
+			"user", id.UserID, "err", err)
+		return def
+	}
+	return b
 }
 
 // projectedUsage returns what the workspace would total after writing
@@ -1258,7 +1279,7 @@ type workspaceInfo struct {
 	AvailableHuman    string `json:"available_human,omitempty"`
 }
 
-func handleWorkspaceInfo(factory workspace.Factory) server.ToolHandlerFunc {
+func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		resolver, err := resolverFor(ctx, factory)
 		if err != nil {
@@ -1278,9 +1299,11 @@ func handleWorkspaceInfo(factory workspace.Factory) server.ToolHandlerFunc {
 			u := used
 			info.UsedBytes = &u
 			info.UsedHuman = humanBytes(used)
-			// Budget/available only when a budget is configured; an
-			// unconfigured budget means unlimited, so the fields stay absent.
-			if budget := workspaceBudgetBytes(); budget > 0 {
+			// Budget/available only when a budget applies (per-workspace
+			// override, else the env default). Unconfigured means unlimited,
+			// so the fields stay absent.
+			id, _ := identity.FromContext(ctx)
+			if budget := effectiveWorkspaceBudget(ctx, store, id); budget > 0 {
 				b := budget
 				info.BudgetBytes = &b
 				info.BudgetHuman = humanBytes(budget)

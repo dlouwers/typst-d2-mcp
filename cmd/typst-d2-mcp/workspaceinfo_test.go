@@ -15,7 +15,7 @@ import (
 // callWorkspaceInfo invokes the handler and returns the decoded payload.
 func callWorkspaceInfo(t *testing.T, ctx context.Context, factory workspace.Factory) workspaceInfo {
 	t.Helper()
-	res, err := handleWorkspaceInfo(factory)(ctx, mcp.CallToolRequest{})
+	res, err := handleWorkspaceInfo(factory, nil)(ctx, mcp.CallToolRequest{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
