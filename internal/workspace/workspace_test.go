@@ -186,3 +186,74 @@ func TestMustExist(t *testing.T) {
 		t.Errorf("expected directory-rejection error, got %v", err)
 	}
 }
+
+func TestDirBytes(t *testing.T) {
+	root := t.TempDir()
+	// 100 + 200 bytes across a nested layout.
+	if err := os.WriteFile(filepath.Join(root, "a.bin"), make([]byte, 100), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sub", "b.bin"), make([]byte, 200), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := DirBytes(root)
+	if err != nil {
+		t.Fatalf("DirBytes: %v", err)
+	}
+	if got != 300 {
+		t.Errorf("DirBytes = %d, want 300", got)
+	}
+
+	// A symlink must not be followed or counted.
+	if err := os.Symlink(filepath.Join(root, "a.bin"), filepath.Join(root, "link")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	got, err = DirBytes(root)
+	if err != nil {
+		t.Fatalf("DirBytes after symlink: %v", err)
+	}
+	if got != 300 {
+		t.Errorf("DirBytes with symlink = %d, want 300 (symlink not counted)", got)
+	}
+}
+
+func TestDirBytes_MissingDirIsZero(t *testing.T) {
+	got, err := DirBytes(filepath.Join(t.TempDir(), "does-not-exist"))
+	if err != nil {
+		t.Fatalf("DirBytes on missing dir: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("DirBytes on missing dir = %d, want 0", got)
+	}
+}
+
+func TestUsage(t *testing.T) {
+	// LocalFS is unbounded: usage is not tracked.
+	if bytes, tracked, err := Usage(LocalFS{}); err != nil || tracked || bytes != 0 {
+		t.Errorf("Usage(LocalFS) = (%d, %v, %v), want (0, false, nil)", bytes, tracked, err)
+	}
+
+	// ScopedFS is bounded: usage is the measured size of its root.
+	root := t.TempDir()
+	s, err := NewScopedFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "f.bin"), make([]byte, 42), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bytes, tracked, err := Usage(s)
+	if err != nil {
+		t.Fatalf("Usage(ScopedFS): %v", err)
+	}
+	if !tracked {
+		t.Error("Usage(ScopedFS) tracked = false, want true")
+	}
+	if bytes != 42 {
+		t.Errorf("Usage(ScopedFS) bytes = %d, want 42", bytes)
+	}
+}
