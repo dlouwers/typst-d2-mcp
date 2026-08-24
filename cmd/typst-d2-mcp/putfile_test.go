@@ -34,6 +34,19 @@ func putFileStore(t *testing.T, ctx context.Context, factory workspace.Factory, 
 	return res
 }
 
+// putFileMode invokes put_file with an explicit mode ("overwrite"/"append").
+func putFileMode(t *testing.T, ctx context.Context, factory workspace.Factory, path, content, mode string) *mcp.CallToolResult {
+	t.Helper()
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "put_file"
+	req.Params.Arguments = map[string]any{"path": path, "content": content, "mode": mode}
+	res, err := handlePutFile(factory, nil)(ctx, req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	return res
+}
+
 func TestPutFile_BudgetEnforced(t *testing.T) {
 	root := t.TempDir()
 	factory := workspace.TenantFactory{Root: root}
@@ -103,6 +116,73 @@ func TestPutFile_PerWorkspaceOverrideBeatsEnvDefault(t *testing.T) {
 	// 60 + 60 = 120 > 100 override.
 	if res := putFileStore(t, ctx, factory, store, "b.bin", string(make([]byte, 60))); !res.IsError {
 		t.Fatal("write over the per-workspace override was accepted, want rejection")
+	}
+}
+
+func TestPutFile_ChunkedUploadExceedsPerCallLimit(t *testing.T) {
+	// A per-call limit of 4 bytes; assemble an 10-byte file from three
+	// chunks (4 + 4 + 2), each within the limit, via overwrite then append.
+	t.Setenv(envMaxInputBytes, "4")
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	id := identity.Identity{UserID: "u"}
+	ctx := identity.WithIdentity(context.Background(), id)
+
+	if res := putFileMode(t, ctx, factory, "big.bin", "AAAA", "overwrite"); res.IsError {
+		t.Fatalf("chunk 1 (overwrite) rejected: %+v", res.Content)
+	}
+	if res := putFileMode(t, ctx, factory, "big.bin", "BBBB", "append"); res.IsError {
+		t.Fatalf("chunk 2 (append) rejected: %+v", res.Content)
+	}
+	if res := putFileMode(t, ctx, factory, "big.bin", "CC", "append"); res.IsError {
+		t.Fatalf("chunk 3 (append) rejected: %+v", res.Content)
+	}
+
+	got, err := os.ReadFile(filepath.Join(root, id.UserID, "big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "AAAABBBBCC" {
+		t.Errorf("assembled file = %q, want %q", got, "AAAABBBBCC")
+	}
+
+	// A single chunk over the per-call limit is still rejected.
+	if res := putFileMode(t, ctx, factory, "big.bin", "AAAAA", "append"); !res.IsError {
+		t.Error("a 5-byte chunk over the 4-byte per-call limit was accepted")
+	}
+}
+
+func TestPutFile_AppendCountsAgainstBudgetWithoutDiscount(t *testing.T) {
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	id := identity.Identity{UserID: "u"}
+	ctx := identity.WithIdentity(context.Background(), id)
+	t.Setenv(envWorkspaceBudget, "100")
+
+	// 80 bytes, then append 30 -> 110 > 100: appends add to usage (no
+	// overwrite discount), so this must be rejected.
+	if res := putFileMode(t, ctx, factory, "a.bin", string(make([]byte, 80)), "overwrite"); res.IsError {
+		t.Fatalf("initial 80-byte write rejected: %+v", res.Content)
+	}
+	res := putFileMode(t, ctx, factory, "a.bin", string(make([]byte, 30)), "append")
+	if !res.IsError {
+		t.Fatal("append that would total 110 > 100 budget was accepted")
+	}
+	if text, ok := mcp.AsTextContent(res.Content[0]); !ok || !strings.Contains(text.Text, "budget") {
+		t.Errorf("error does not mention budget: %+v", res.Content[0])
+	}
+}
+
+func TestPutFile_UnknownModeRejected(t *testing.T) {
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "u"})
+	res := putFileMode(t, ctx, factory, "a.bin", "x", "sideways")
+	if !res.IsError {
+		t.Fatal("unknown mode was accepted")
+	}
+	if text, ok := mcp.AsTextContent(res.Content[0]); !ok || !strings.Contains(text.Text, "unknown mode") {
+		t.Errorf("error does not explain the bad mode: %+v", res.Content[0])
 	}
 }
 

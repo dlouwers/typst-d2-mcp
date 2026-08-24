@@ -217,8 +217,9 @@ func (f TenantFactory) Resolver(id identity.Identity) (Resolver, error) {
 }
 
 // WriteFile resolves path through r and writes content, creating parent
-// directories as needed. It is the back-end for the put_file MCP tool.
-// The returned string is the resolved on-disk path (useful for logging /
+// directories as needed and truncating any existing file. It is the
+// back-end for the put_file MCP tool's default (overwrite) mode. The
+// returned string is the resolved on-disk path (useful for logging /
 // tests); callers should not echo it back to clients in HTTP mode.
 func WriteFile(r Resolver, path string, content []byte) (string, error) {
 	resolved, err := r.Resolve(path)
@@ -230,6 +231,30 @@ func WriteFile(r Resolver, path string, content []byte) (string, error) {
 	}
 	if err := os.WriteFile(resolved, content, 0o600); err != nil {
 		return "", fmt.Errorf("write file: %w", err)
+	}
+	return resolved, nil
+}
+
+// AppendFile resolves path through r and appends content to the file,
+// creating it (and parent directories) if absent. It is the back-end for
+// put_file's append mode, which lets a client stream a file larger than
+// the per-call size cap in bounded chunks. Callers should not echo the
+// resolved path back to clients in HTTP mode.
+func AppendFile(r Resolver, path string, content []byte) (string, error) {
+	resolved, err := r.Resolve(path)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(resolved), 0o700); err != nil {
+		return "", fmt.Errorf("create parent dirs: %w", err)
+	}
+	f, err := os.OpenFile(resolved, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("open for append: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.Write(content); err != nil {
+		return "", fmt.Errorf("append to file: %w", err)
 	}
 	return resolved, nil
 }
