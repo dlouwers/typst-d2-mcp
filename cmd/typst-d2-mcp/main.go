@@ -829,18 +829,29 @@ When running against a local stdio server, prefer your host's filesystem
 tools (Write/Edit) so you don't ship the file content through this
 channel.
 
-Size limit: content must be at most %d bytes (%s) measured AFTER decoding.
-For base64, that bound is the decoded size — roughly 3/4 of the string you
-pass — NOT the length of the base64 string, so judge against the decoded
-size, not the encoded one. Raise %s on the server to lift the ceiling.
-Pushing a binary asset that fits under this limit — e.g. an image a Typst
-document references, which must exist in the workspace before you compile —
-is expected and supported: do it rather than giving up or falling back to a
-local toolchain, which a hosted deployment may not have.
+Size limit: each call's content must be at most %d bytes (%s) measured
+AFTER decoding. For base64, that bound is the decoded size — roughly 3/4
+of the string you pass — NOT the length of the base64 string, so judge
+against the decoded size, not the encoded one. Raise %s on the server to
+lift the ceiling. Pushing a binary asset that fits under this limit —
+e.g. an image a Typst document references, which must exist in the
+workspace before you compile — is expected and supported: do it rather
+than giving up or falling back to a local toolchain, which a hosted
+deployment may not have.
+
+Chunked upload for a file LARGER than the per-call limit: split it into
+slices each at most the limit above and send them in order — the first
+with mode "overwrite" (the default; it truncates any previous file), then
+each remaining slice with mode "append". The slices are concatenated
+verbatim on disk, so a base64 asset must be decoded to bytes first and
+split on byte boundaries (do not split the base64 text itself). This is
+how you get an over-limit asset in; the per-call limit still bounds each
+slice, and the cumulative budget below still bounds the whole file.
 
 A hosted workspace may also have a cumulative byte budget across all its
-files. A write that would push the total over that budget is rejected;
-call workspace_info to see the budget and remaining space before pushing.
+files. A write (or append) that would push the total over that budget is
+rejected; call workspace_info to see the budget and remaining space before
+pushing.
 
 The path is resolved through the server's active workspace. In local
 mode any path is accepted; in scoped/hosted mode the path must be
@@ -856,6 +867,9 @@ relative and stay within the workspace (traversal is rejected).`,
 		),
 		mcp.WithString("encoding",
 			mcp.Description(`"utf8" (default) for text or "base64" for binary data.`),
+		),
+		mcp.WithString("mode",
+			mcp.Description(`"overwrite" (default) truncates and writes; "append" adds to the end of an existing file, for streaming a file larger than the per-call limit in chunks.`),
 		),
 	)
 	s.AddTool(putFileTool, handlePutFile(factory, store))
@@ -1172,6 +1186,10 @@ func handlePutFile(factory workspace.Factory, store *authdb.Store) server.ToolHa
 			return mcp.NewToolResultErrorFromErr("workspace setup", err), nil
 		}
 		encoding := strings.ToLower(request.GetString("encoding", "utf8"))
+		mode := strings.ToLower(request.GetString("mode", "overwrite"))
+		if mode != "overwrite" && mode != "append" {
+			return mcp.NewToolResultError(fmt.Sprintf("unknown mode %q (expected overwrite or append)", mode)), nil
+		}
 
 		var data []byte
 		switch encoding {
@@ -1202,7 +1220,7 @@ func handlePutFile(factory workspace.Factory, store *authdb.Store) server.ToolHa
 		// workspace has no bounded size (tracked=false).
 		id, _ := identity.FromContext(ctx)
 		if budget := effectiveWorkspaceBudget(ctx, store, id); budget > 0 {
-			projected, tracked, err := projectedUsage(resolver, path, int64(len(data)))
+			projected, tracked, err := projectedUsage(resolver, path, int64(len(data)), mode)
 			if err != nil {
 				metrics.PutFileTotal.WithLabelValues(metrics.ResultFail).Inc()
 				return mcp.NewToolResultErrorFromErr("measure workspace", err), nil
@@ -1217,12 +1235,20 @@ func handlePutFile(factory workspace.Factory, store *authdb.Store) server.ToolHa
 			}
 		}
 
-		if _, err := workspace.WriteFile(resolver, path, data); err != nil {
+		write := workspace.WriteFile
+		if mode == "append" {
+			write = workspace.AppendFile
+		}
+		if _, err := write(resolver, path, data); err != nil {
 			metrics.PutFileTotal.WithLabelValues(metrics.ResultFail).Inc()
 			return mcp.NewToolResultErrorFromErr("write file", err), nil
 		}
 		metrics.PutFileTotal.WithLabelValues(metrics.ResultOK).Inc()
-		return mcp.NewToolResultText(fmt.Sprintf("wrote %d bytes to %s", len(data), path)), nil
+		verb := "wrote"
+		if mode == "append" {
+			verb = "appended"
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("%s %d bytes to %s", verb, len(data), path)), nil
 	}
 }
 
@@ -1245,14 +1271,19 @@ func effectiveWorkspaceBudget(ctx context.Context, store *authdb.Store, id ident
 }
 
 // projectedUsage returns what the workspace would total after writing
-// newSize bytes to path, and whether the workspace's size is even tracked
-// (false in local mode, where a cumulative budget is meaningless). An
-// in-place overwrite is accounted for by discounting the target's current
-// size, so rewriting a file never counts its bytes twice.
-func projectedUsage(r workspace.Resolver, path string, newSize int64) (total int64, tracked bool, err error) {
+// newSize bytes to path in the given mode, and whether the workspace's
+// size is even tracked (false in local mode, where a cumulative budget is
+// meaningless). In "overwrite" mode the target's current size is
+// discounted, so rewriting a file never counts its bytes twice; in
+// "append" mode the new bytes add to the existing file, so nothing is
+// discounted.
+func projectedUsage(r workspace.Resolver, path string, newSize int64, mode string) (total int64, tracked bool, err error) {
 	used, tracked, err := workspace.Usage(r)
 	if err != nil || !tracked {
 		return 0, tracked, err
+	}
+	if mode == "append" {
+		return used + newSize, true, nil
 	}
 	var existing int64
 	if resolved, rerr := r.Resolve(path); rerr == nil {

@@ -257,3 +257,42 @@ func TestUsage(t *testing.T) {
 		t.Errorf("Usage(ScopedFS) bytes = %d, want 42", bytes)
 	}
 }
+
+func TestAppendFile(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewScopedFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Append to a non-existent file creates it.
+	if _, err := AppendFile(s, "a.bin", []byte("hello ")); err != nil {
+		t.Fatalf("first AppendFile: %v", err)
+	}
+	// A second append concatenates rather than truncating.
+	if _, err := AppendFile(s, "a.bin", []byte("world")); err != nil {
+		t.Fatalf("second AppendFile: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(root, "a.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "hello world" {
+		t.Errorf("file content = %q, want %q", got, "hello world")
+	}
+}
+
+func TestAppendFile_CreatesParentDirs(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewScopedFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AppendFile(s, "nested/deep/a.bin", []byte("x")); err != nil {
+		t.Fatalf("AppendFile into a new subtree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "nested", "deep", "a.bin")); err != nil {
+		t.Errorf("appended file not created: %v", err)
+	}
+}
