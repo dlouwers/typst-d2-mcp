@@ -17,6 +17,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # The design-system steps need the GitHub App private key, which lives
+      # only in the regular Actions secret store. Dependabot runs (and fork
+      # PRs) get an *empty* `secrets` context — yet `vars` still resolve there,
+      # so guarding on `vars.DS_APP_CLIENT_ID != ''` alone lets the token-mint
+      # step run and then fail hard with "private-key must be non-empty",
+      # taking the whole job red. Gate on the key itself: absent key ⇒ the DS
+      # steps stay inert. Referencing an absent secret yields "" (no error), so
+      # this is safe to evaluate in every context. `secrets` is not usable in an
+      # `if:`, but reading it into a job-level env var and testing that is the
+      # documented workaround.
+      HAS_DS_KEY: ${{ secrets.DS_APP_PRIVATE_KEY != '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,14 +40,17 @@ jobs:
           cache: true
 
       - name: Install D2
+        timeout-minutes: 3
         run: curl -fsSL https://d2lang.com/install.sh | sh -s --
 
       - name: Install Typst
+        timeout-minutes: 3
         run: |
           curl -fsSL https://github.com/typst/typst/releases/download/v0.14.2/typst-x86_64-unknown-linux-musl.tar.xz \
             | tar -xJ -C /usr/local/bin --strip-components=1
 
       - name: Download dependencies
+        timeout-minutes: 5
         run: go mod download
 
       # The Stormlantern assets under internal/web/static/vendor/ are
@@ -48,11 +63,13 @@ jobs:
       # there is no annual expiry to renew by hand. The app id is a repo
       # variable (it is not secret); only the private key is a secret.
       #
-      # All three steps stay inert until DS_APP_CLIENT_ID is set, so a fork
-      # or a fresh clone builds without them rather than failing.
+      # All three steps stay inert unless DS_APP_PRIVATE_KEY is available (see
+      # HAS_DS_KEY above), so a Dependabot run, a fork PR, or a fresh clone
+      # builds without them rather than failing on the missing key.
       - name: Mint a token for the design system
         id: ds_token
-        if: vars.DS_APP_CLIENT_ID != ''
+        if: env.HAS_DS_KEY == 'true'
+        timeout-minutes: 2
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.DS_APP_CLIENT_ID }}
@@ -61,7 +78,8 @@ jobs:
           repositories: stormlantern-design-system
 
       - name: Check out design system
-        if: vars.DS_APP_CLIENT_ID != ''
+        if: env.HAS_DS_KEY == 'true'
+        timeout-minutes: 3
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: dlouwers/stormlantern-design-system
@@ -70,7 +88,8 @@ jobs:
           persist-credentials: false
 
       - name: Check vendored assets are in sync
-        if: vars.DS_APP_CLIENT_ID != ''
+        if: env.HAS_DS_KEY == 'true'
+        timeout-minutes: 2
         env:
           STORMLANTERN_DS: .design-system
         run: |
@@ -79,18 +98,23 @@ jobs:
             || { echo "::error::vendored design-system assets are stale; run scripts/sync-vendor.sh"; exit 1; }
 
       - name: Run go vet
+        timeout-minutes: 5
         run: go vet ./...
 
       - name: Run tests
+        timeout-minutes: 10
         run: go test -v ./...
 
       - name: Build typst-d2-prep
+        timeout-minutes: 5
         run: go build -v ./cmd/typst-d2-prep
 
       - name: Build typst-d2-mcp
+        timeout-minutes: 5
         run: go build -v ./cmd/typst-d2-mcp
 
       - name: Lint
+        timeout-minutes: 10
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: latest
@@ -118,6 +142,7 @@ jobs:
           bun-version: latest
 
       - name: Install Playwright deps
+        timeout-minutes: 3
         working-directory: playwright
         run: bun install --frozen-lockfile
 
@@ -132,6 +157,7 @@ jobs:
 
       - name: Install Chromium + system deps (cache miss)
         if: steps.playwright-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 8
         working-directory: playwright
         run: bunx playwright install --with-deps chromium
 
@@ -145,6 +171,7 @@ jobs:
       # scripts/e2e-server.sh, which builds the binary with the Go
       # toolchain set up above.
       - name: Run Playwright tests
+        timeout-minutes: 5
         working-directory: playwright
         run: bunx playwright test
 
