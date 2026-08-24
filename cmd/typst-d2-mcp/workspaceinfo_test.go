@@ -76,4 +76,56 @@ func TestHandleWorkspaceInfo_ScopedTracked(t *testing.T) {
 	if info.UsedHuman == "" {
 		t.Error("used_human is empty when usage is tracked")
 	}
+	// No budget configured: budget/available absent.
+	if info.BudgetBytes != nil || info.AvailableBytes != nil {
+		t.Errorf("budget fields present without a budget: budget=%v available=%v",
+			info.BudgetBytes, info.AvailableBytes)
+	}
+}
+
+func TestHandleWorkspaceInfo_BudgetFields(t *testing.T) {
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	id := identity.Identity{UserID: "u"}
+	ctx := identity.WithIdentity(context.Background(), id)
+	t.Setenv(envWorkspaceBudget, "1000")
+
+	if err := os.MkdirAll(filepath.Join(root, id.UserID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, id.UserID, "f.bin"), make([]byte, 200), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info := callWorkspaceInfo(t, ctx, factory)
+
+	if info.BudgetBytes == nil || *info.BudgetBytes != 1000 {
+		t.Fatalf("budget_bytes = %v, want 1000", info.BudgetBytes)
+	}
+	if info.AvailableBytes == nil || *info.AvailableBytes != 800 {
+		t.Fatalf("available_bytes = %v, want 800 (1000-200)", info.AvailableBytes)
+	}
+	if info.BudgetHuman == "" || info.AvailableHuman == "" {
+		t.Error("human budget/available labels are empty")
+	}
+}
+
+func TestHandleWorkspaceInfo_AvailableFlooredAtZero(t *testing.T) {
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	id := identity.Identity{UserID: "u"}
+	ctx := identity.WithIdentity(context.Background(), id)
+	t.Setenv(envWorkspaceBudget, "100")
+
+	// Usage already over budget (e.g. budget lowered after the fact):
+	// available must floor at 0, never go negative.
+	if err := os.MkdirAll(filepath.Join(root, id.UserID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, id.UserID, "f.bin"), make([]byte, 250), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info := callWorkspaceInfo(t, ctx, factory)
+	if info.AvailableBytes == nil || *info.AvailableBytes != 0 {
+		t.Fatalf("available_bytes = %v, want 0 (floored)", info.AvailableBytes)
+	}
 }

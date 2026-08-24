@@ -46,12 +46,13 @@ var (
 const (
 	serverName = "typst-d2-mcp"
 
-	envTransport      = "TYPST_D2_MCP_TRANSPORT"
-	envAddr           = "TYPST_D2_MCP_ADDR"
-	envPath           = "TYPST_D2_MCP_PATH"
-	envWorkspace      = "TYPST_D2_MCP_WORKSPACE"
-	envCompileTimeout = "TYPST_D2_MCP_COMPILE_TIMEOUT"
-	envMaxInputBytes  = "TYPST_D2_MCP_MAX_INPUT_BYTES"
+	envTransport       = "TYPST_D2_MCP_TRANSPORT"
+	envAddr            = "TYPST_D2_MCP_ADDR"
+	envPath            = "TYPST_D2_MCP_PATH"
+	envWorkspace       = "TYPST_D2_MCP_WORKSPACE"
+	envCompileTimeout  = "TYPST_D2_MCP_COMPILE_TIMEOUT"
+	envMaxInputBytes   = "TYPST_D2_MCP_MAX_INPUT_BYTES"
+	envWorkspaceBudget = "TYPST_D2_MCP_WORKSPACE_BUDGET_BYTES"
 
 	envAuth            = "TYPST_D2_MCP_AUTH"
 	envDB              = "TYPST_D2_MCP_DB"
@@ -86,7 +87,11 @@ const (
 	defaultPath           = "/mcp"
 	defaultCompileTimeout = 30 * time.Second
 	defaultMaxInputBytes  = int64(1 << 20) // 1 MiB
-	defaultQuotaPerDay    = 1
+	// 0 = no cumulative workspace budget (the historical behaviour); only
+	// the per-call cap applies. A positive value bounds a tenant's total
+	// stored bytes, enforced at put_file.
+	defaultWorkspaceBudget = int64(0)
+	defaultQuotaPerDay     = 1
 
 	// pdfURIPrefix is the scheme + host used by the compile tool when it
 	// returns a ResourceLink for the produced PDF. Clients can fetch the
@@ -106,6 +111,14 @@ func compileTimeout() time.Duration {
 // by put_file). It bounds memory + parser work before any d2/typst exec.
 func maxInputBytes() int64 {
 	return int64Env(envMaxInputBytes, defaultMaxInputBytes)
+}
+
+// workspaceBudgetBytes is the cumulative cap on a tenant's total stored
+// bytes, enforced at put_file. 0 disables the check (only the per-call
+// limit applies), and it is inert in local stdio mode where the
+// workspace is the shared filesystem rather than a bounded directory.
+func workspaceBudgetBytes() int64 {
+	return int64Env(envWorkspaceBudget, defaultWorkspaceBudget)
 }
 
 // humanBytes renders a byte count in binary units for human-facing text
@@ -824,6 +837,10 @@ document references, which must exist in the workspace before you compile —
 is expected and supported: do it rather than giving up or falling back to a
 local toolchain, which a hosted deployment may not have.
 
+A hosted workspace may also have a cumulative byte budget across all its
+files. A write that would push the total over that budget is rejected;
+call workspace_info to see the budget and remaining space before pushing.
+
 The path is resolved through the server's active workspace. In local
 mode any path is accepted; in scoped/hosted mode the path must be
 relative and stay within the workspace (traversal is rejected).`,
@@ -856,9 +873,14 @@ fit. Takes no arguments; returns JSON:
   - used_bytes / used_human: total bytes currently stored in the
     workspace, measured live at call time. Present only when
     usage_tracked is true.
+  - budget_bytes / budget_human: the cumulative cap on the workspace's
+    total size. Present only when a budget is configured; absent means
+    no cumulative cap (only the per-call limit applies).
+  - available_bytes / available_human: budget minus current usage,
+    floored at zero. Present only alongside budget_bytes.
 
-A cumulative workspace budget is not yet enforced; today only the
-per-call limit bounds writes.`, envMaxInputBytes)),
+When budget_bytes is present, a put_file that would push used_bytes over
+it is rejected — check available_bytes before pushing a large asset.`, envMaxInputBytes)),
 	)
 	s.AddTool(workspaceInfoTool, handleWorkspaceInfo(factory))
 }
@@ -1174,6 +1196,24 @@ func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 			)), nil
 		}
 
+		// Cumulative workspace budget. Inert when unset (0) or in local
+		// mode, where the workspace has no bounded size (tracked=false).
+		if budget := workspaceBudgetBytes(); budget > 0 {
+			projected, tracked, err := projectedUsage(resolver, path, int64(len(data)))
+			if err != nil {
+				metrics.PutFileTotal.WithLabelValues(metrics.ResultFail).Inc()
+				return mcp.NewToolResultErrorFromErr("measure workspace", err), nil
+			}
+			if tracked && projected > budget {
+				metrics.PutFileTotal.WithLabelValues(metrics.ResultOverBudget).Inc()
+				return mcp.NewToolResultError(fmt.Sprintf(
+					"workspace budget exceeded: this write would bring the workspace to %d bytes (%s), over the %d byte (%s) budget; "+
+						"delete files you no longer need, or ask an administrator to raise %s",
+					projected, humanBytes(projected), budget, humanBytes(budget), envWorkspaceBudget,
+				)), nil
+			}
+		}
+
 		if _, err := workspace.WriteFile(resolver, path, data); err != nil {
 			metrics.PutFileTotal.WithLabelValues(metrics.ResultFail).Inc()
 			return mcp.NewToolResultErrorFromErr("write file", err), nil
@@ -1183,15 +1223,39 @@ func handlePutFile(factory workspace.Factory) server.ToolHandlerFunc {
 	}
 }
 
+// projectedUsage returns what the workspace would total after writing
+// newSize bytes to path, and whether the workspace's size is even tracked
+// (false in local mode, where a cumulative budget is meaningless). An
+// in-place overwrite is accounted for by discounting the target's current
+// size, so rewriting a file never counts its bytes twice.
+func projectedUsage(r workspace.Resolver, path string, newSize int64) (total int64, tracked bool, err error) {
+	used, tracked, err := workspace.Usage(r)
+	if err != nil || !tracked {
+		return 0, tracked, err
+	}
+	var existing int64
+	if resolved, rerr := r.Resolve(path); rerr == nil {
+		if info, serr := os.Stat(resolved); serr == nil && info.Mode().IsRegular() {
+			existing = info.Size()
+		}
+	}
+	return used - existing + newSize, true, nil
+}
+
 // workspaceInfo is the JSON payload returned by the workspace_info tool.
-// UsedBytes/UsedHuman are pointers/omitempty so they are absent (not a
-// misleading zero) in local mode, where usage is not tracked.
+// Used/Budget/Available fields are pointers/omitempty so they are absent
+// (not a misleading zero) when they do not apply: usage in local mode, and
+// budget/available when no budget is configured.
 type workspaceInfo struct {
 	PerCallLimitBytes int64  `json:"per_call_limit_bytes"`
 	PerCallLimitHuman string `json:"per_call_limit_human"`
 	UsageTracked      bool   `json:"usage_tracked"`
 	UsedBytes         *int64 `json:"used_bytes,omitempty"`
 	UsedHuman         string `json:"used_human,omitempty"`
+	BudgetBytes       *int64 `json:"budget_bytes,omitempty"`
+	BudgetHuman       string `json:"budget_human,omitempty"`
+	AvailableBytes    *int64 `json:"available_bytes,omitempty"`
+	AvailableHuman    string `json:"available_human,omitempty"`
 }
 
 func handleWorkspaceInfo(factory workspace.Factory) server.ToolHandlerFunc {
@@ -1214,6 +1278,19 @@ func handleWorkspaceInfo(factory workspace.Factory) server.ToolHandlerFunc {
 			u := used
 			info.UsedBytes = &u
 			info.UsedHuman = humanBytes(used)
+			// Budget/available only when a budget is configured; an
+			// unconfigured budget means unlimited, so the fields stay absent.
+			if budget := workspaceBudgetBytes(); budget > 0 {
+				b := budget
+				info.BudgetBytes = &b
+				info.BudgetHuman = humanBytes(budget)
+				avail := budget - used
+				if avail < 0 {
+					avail = 0
+				}
+				info.AvailableBytes = &avail
+				info.AvailableHuman = humanBytes(avail)
+			}
 		}
 		payload, err := json.MarshalIndent(info, "", "  ")
 		if err != nil {
