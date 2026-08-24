@@ -22,6 +22,7 @@
         <th>Quota</th>
         <th>Key</th>
         <th class="num">Storage</th>
+        <th>Budget</th>
         <th>Actions</th>
       </tr>
     </thead>
@@ -51,6 +52,7 @@
           {{bytesLabel .StorageBytes}}
           {{if .StorageMeasAt}}<div class="muted">{{agoLabel .StorageMeasAt}}</div>{{end}}
         </td>
+        <td>{{budgetLabel .BudgetOverride $.DefaultBudget}}</td>
         <td class="actions">
           <details>
             <summary>Manage</summary>
@@ -76,6 +78,20 @@
                     <input type="number" name="value" inputmode="numeric" placeholder="10" value="{{quotaValue .QuotaOverride}}" class="narrow">
                   </label>
                   <button type="submit" class="btn btn-primary btn-sm">Save quota</button>
+                </fieldset>
+              </form>
+
+              <form method="post" action="/admin/budget" hx-post="/admin/budget" hx-target="#users" hx-swap="outerHTML">
+                <input type="hidden" name="login" value="{{.GitHubLogin}}">
+                <fieldset>
+                  <legend>Storage budget</legend>
+                  <label><input type="radio" name="mode" value="default" {{if not .BudgetOverride}}checked{{end}}> Default</label>
+                  <label><input type="radio" name="mode" value="unlimited" {{if and .BudgetOverride (eq (deref64 .BudgetOverride) 0)}}checked{{end}}> Unlimited</label>
+                  {{/* Same no-constraint reasoning as the quota field above. */}}
+                  <label><input type="radio" name="mode" value="fixed"> Fixed
+                    <input type="number" name="value" inputmode="numeric" placeholder="52428800" value="{{budgetValue .BudgetOverride}}" class="narrow"> bytes
+                  </label>
+                  <button type="submit" class="btn btn-primary btn-sm">Save budget</button>
                 </fieldset>
               </form>
 
@@ -111,7 +127,7 @@
         </td>
       </tr>
     {{else}}
-      <tr><td colspan="7" class="muted">Nobody yet. Invite someone above.</td></tr>
+      <tr><td colspan="8" class="muted">Nobody yet. Invite someone above.</td></tr>
     {{end}}
     </tbody>
   </table>

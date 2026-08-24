@@ -3,6 +3,7 @@ import { APP_ORIGIN } from "../playwright.config";
 import { signIn } from "../helpers/session";
 import {
   auditActions,
+  budgetFor,
   countInvites,
   countUsers,
   quotaFor,
@@ -68,8 +69,8 @@ test.describe("htmx actions", () => {
     await page.reload();
 
     const row = await openRow(page, "quotauser");
-    await row.locator('input[name="mode"][value="fixed"]').check();
-    await row.locator('input[name="value"]').fill("12");
+    await row.locator('form[action="/admin/quota"] input[name="mode"][value="fixed"]').check();
+    await row.locator('form[action="/admin/quota"] input[name="value"]').fill("12");
     await markDocument(page);
     await row.getByRole("button", { name: "Save quota" }).click();
 
@@ -79,12 +80,36 @@ test.describe("htmx actions", () => {
     expect(quotaFor("quotauser")).toBe("12");
   });
 
+  test("setting a fixed storage budget updates the row", async ({ page }) => {
+    seedSignedInUser(4260, "budgetuser");
+    await page.reload();
+
+    const row = await openRow(page, "budgetuser");
+    await row
+      .locator('form[action="/admin/budget"] input[name="mode"][value="fixed"]')
+      .check();
+    await row
+      .locator('form[action="/admin/budget"] input[name="value"]')
+      .fill("52428800"); // 50 MiB
+    await markDocument(page);
+    await row.getByRole("button", { name: "Save budget" }).click();
+
+    await expect(page.locator("#flash")).toContainText("Storage budget updated");
+    // The admin UI formats storage with bytesLabel, which divides by 1024
+    // but labels "MB" (50 * 1024 * 1024 bytes -> "50.0 MB").
+    await expect(page.locator("tr", { hasText: "budgetuser" })).toContainText(
+      "50.0 MB",
+    );
+    expect(await documentSurvived(page)).toBe(true);
+    expect(budgetFor("budgetuser")).toBe("52428800");
+  });
+
   test("unlimited quota renders as unlimited", async ({ page }) => {
     seedSignedInUser(4243, "unlimiteduser");
     await page.reload();
 
     const row = await openRow(page, "unlimiteduser");
-    await row.locator('input[name="mode"][value="unlimited"]').check();
+    await row.locator('form[action="/admin/quota"] input[name="mode"][value="unlimited"]').check();
     await row.getByRole("button", { name: "Save quota" }).click();
 
     await expect(page.locator("tr", { hasText: "unlimiteduser" })).toContainText(
@@ -190,7 +215,7 @@ test.describe("quota form validation", () => {
     await expect(page.locator("tr", { hasText: "wasunlimited" })).toContainText("unlimited");
 
     const row = await openRow(page, "wasunlimited");
-    await row.locator('input[name="mode"][value="default"]').check();
+    await row.locator('form[action="/admin/quota"] input[name="mode"][value="default"]').check();
     await row.getByRole("button", { name: "Save quota" }).click();
 
     await expect(page.locator("#flash")).toContainText("Quota updated");
@@ -203,7 +228,7 @@ test.describe("quota form validation", () => {
     await page.reload();
 
     const row = await openRow(page, "stayunlimited");
-    await row.locator('input[name="mode"][value="unlimited"]').check();
+    await row.locator('form[action="/admin/quota"] input[name="mode"][value="unlimited"]').check();
     await row.getByRole("button", { name: "Save quota" }).click();
 
     await expect(page.locator("#flash")).toContainText("Quota updated");
@@ -218,8 +243,8 @@ test.describe("quota form validation", () => {
     await page.reload();
 
     const row = await openRow(page, "junkvalue");
-    await row.locator('input[name="value"]').fill("0");
-    await row.locator('input[name="mode"][value="default"]').check();
+    await row.locator('form[action="/admin/quota"] input[name="value"]').fill("0");
+    await row.locator('form[action="/admin/quota"] input[name="mode"][value="default"]').check();
     await row.getByRole("button", { name: "Save quota" }).click();
 
     await expect(page.locator("#flash")).toContainText("Quota updated");

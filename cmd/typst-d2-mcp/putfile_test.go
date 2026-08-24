@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -16,10 +17,17 @@ import (
 // raw result for inspection.
 func putFile(t *testing.T, ctx context.Context, factory workspace.Factory, path, content string) *mcp.CallToolResult {
 	t.Helper()
+	return putFileStore(t, ctx, factory, nil, path, content)
+}
+
+// putFileStore is putFile with an explicit store, for exercising the
+// per-workspace budget override.
+func putFileStore(t *testing.T, ctx context.Context, factory workspace.Factory, store *authdb.Store, path, content string) *mcp.CallToolResult {
+	t.Helper()
 	req := mcp.CallToolRequest{}
 	req.Params.Name = "put_file"
 	req.Params.Arguments = map[string]any{"path": path, "content": content}
-	res, err := handlePutFile(factory)(ctx, req)
+	res, err := handlePutFile(factory, store)(ctx, req)
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -65,6 +73,36 @@ func TestPutFile_BudgetOverwriteNotDoubleCounted(t *testing.T) {
 	// (the old 80 is discounted), not 160 — so it stays within budget.
 	if res := putFile(t, ctx, factory, "a.bin", string(make([]byte, 80))); res.IsError {
 		t.Fatalf("in-place overwrite wrongly counted as new bytes: %+v", res.Content)
+	}
+}
+
+func TestPutFile_PerWorkspaceOverrideBeatsEnvDefault(t *testing.T) {
+	// Env default is unlimited (unset). A per-workspace override of 100
+	// bytes must still be enforced — proving the override is consulted,
+	// not just the env.
+	store, err := authdb.Open(filepath.Join(t.TempDir(), "auth.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.UpsertGitHubUser(t.Context(), 42, "octocat", "octocat@example.com"); err != nil {
+		t.Fatalf("UpsertGitHubUser: %v", err)
+	}
+	hundred := int64(100)
+	if err := store.SetWorkspaceBudget(t.Context(), "dlouwers", "octocat", &hundred); err != nil {
+		t.Fatalf("SetWorkspaceBudget: %v", err)
+	}
+
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "gh:42"})
+
+	if res := putFileStore(t, ctx, factory, store, "a.bin", string(make([]byte, 60))); res.IsError {
+		t.Fatalf("first write rejected unexpectedly: %+v", res.Content)
+	}
+	// 60 + 60 = 120 > 100 override.
+	if res := putFileStore(t, ctx, factory, store, "b.bin", string(make([]byte, 60))); !res.IsError {
+		t.Fatal("write over the per-workspace override was accepted, want rejection")
 	}
 }
 

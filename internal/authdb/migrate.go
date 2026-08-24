@@ -164,6 +164,23 @@ var migrations = []migration{
 )`,
 		},
 	},
+	{
+		revision: 6,
+		name:     "per-workspace storage budget override",
+		stmts: []string{
+			// Keyed by the tenant/workspace id — the same 'gh:'||github_id
+			// string workspace_usage uses — not the users row: a storage
+			// budget is a property of the workspace it caps, so it sits
+			// next to the usage and stays correct if workspaces ever
+			// decouple from users. NULL inherits the env default, 0 means
+			// unlimited (matching the put_file budget<=0 path), N caps at
+			// N bytes.
+			`CREATE TABLE IF NOT EXISTS workspace_budgets (
+  user_id      TEXT PRIMARY KEY,
+  budget_bytes INTEGER
+)`,
+		},
+	},
 }
 
 // latestRevision is the highest revision this binary knows how to apply.
