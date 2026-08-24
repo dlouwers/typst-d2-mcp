@@ -263,7 +263,30 @@ VERIFYING THE RESULT:
   text labels are readable and the diagram fits within page margins. If a
   diagram looks cramped, add "direction: down", split it into multiple
   diagrams, or remove non-essential nodes. If you cannot view the PDF
-  yourself, advise the user to inspect it.`
+  yourself, advise the user to inspect it.
+
+WORKSPACE, FILES & LIMITS (put_file / workspace_info):
+  In hosted (HTTP) mode the server owns a per-tenant workspace and the
+  document's own files do not reach it by themselves. Any asset a Typst
+  document references — e.g. image("logo.png") — must be pushed with
+  put_file BEFORE you compile. Do that rather than giving up or falling
+  back to a local toolchain, which a hosted deployment may not have.
+
+  put_file's size limit is on the DECODED bytes, roughly 3/4 of the
+  base64 string you pass — NOT the string's length. An asset that fits
+  under the limit (see workspace_info.per_call_limit_bytes) goes in one
+  call; judge by the decoded size, not the encoded one.
+
+  To upload a file LARGER than the per-call limit, stream it in chunks:
+  decode the asset to bytes, split on BYTE boundaries (never split the
+  base64 text), then send the first slice with mode "overwrite" and each
+  remaining slice with mode "append". Each slice must be within the
+  per-call limit; the slices concatenate verbatim on disk.
+
+  A hosted workspace may also have a cumulative byte budget across all
+  its files. Call workspace_info first — it returns per_call_limit_bytes,
+  used_bytes, and (when a budget is set) budget_bytes / available_bytes —
+  to see what will fit before pushing a large asset.`
 
 // House templates live in a typst local package, so the model imports
 // them by name rather than by path — which matters because the compile
@@ -797,18 +820,16 @@ func registerTools(s *server.MCPServer, factory workspace.Factory, store *authdb
 	compileTypstTool := mcp.NewTool("compile_typst_with_d2",
 		mcp.WithDescription(`Compile a Typst document containing #d2[...] diagram blocks to PDF.
 
-The input file is preprocessed in place: each #d2(opts)[code] block is
-rendered to SVG via the d2 CLI, base64-embedded, and the resulting Typst
-source is compiled with the typst CLI. The output PDF is written next to
-the input .typ file inside the active workspace, and a resource_link
-content block in the result points at the PDF (fetch the bytes with
-resources/read on its typst-d2://pdf/... URI).
+Each #d2(opts)[code] block is rendered to SVG via the d2 CLI,
+base64-embedded, and the source compiled with typst. The PDF is written
+next to the input .typ in the active workspace; a resource_link in the
+result points at it (fetch with resources/read on its typst-d2://pdf/...
+URI).
 
 Quick rules (full strategy in the server's instructions):
   - Default layout "elk", theme "0" for print-friendly diagrams.
   - On A4 portrait, add 'direction: down' inside the D2 block.
-  - A central node with 4+ children renders horizontally even with
-    'direction: down' — rewrite as a vertical chain.
+  - A central node with 4+ children renders horizontally — use a chain.
 
 After compiling, inspect the PDF if you can; if a diagram looks cramped,
 split it, simplify it, or switch to 'direction: down'.`),
@@ -821,42 +842,22 @@ split it, simplify it, or switch to 'direction: down'.`),
 
 	inputLimit := maxInputBytes()
 	putFileTool := mcp.NewTool("put_file",
-		mcp.WithDescription(fmt.Sprintf(`Write a file into the server's active workspace.
+		mcp.WithDescription(fmt.Sprintf(`Write a file into the server's active workspace. Use only when your
+runtime cannot write to the target filesystem directly (e.g. a hosted
+MCP server over HTTP); against a local stdio server prefer your host's
+Write/Edit tools.
 
-Use this only when your runtime cannot directly write to the target
-filesystem — for example when talking to a hosted MCP server over HTTP.
-When running against a local stdio server, prefer your host's filesystem
-tools (Write/Edit) so you don't ship the file content through this
-channel.
+Each call's content is capped at %d bytes (%s), measured AFTER decoding
+(for base64, ~3/4 of the string — judge by the decoded size, not the
+string length). To upload a LARGER file, send it in slices within that
+cap: first slice mode "overwrite", the rest "append". A hosted workspace
+may also have a cumulative byte budget — call workspace_info to check the
+limit and remaining space before a large push.
 
-Size limit: each call's content must be at most %d bytes (%s) measured
-AFTER decoding. For base64, that bound is the decoded size — roughly 3/4
-of the string you pass — NOT the length of the base64 string, so judge
-against the decoded size, not the encoded one. Raise %s on the server to
-lift the ceiling. Pushing a binary asset that fits under this limit —
-e.g. an image a Typst document references, which must exist in the
-workspace before you compile — is expected and supported: do it rather
-than giving up or falling back to a local toolchain, which a hosted
-deployment may not have.
-
-Chunked upload for a file LARGER than the per-call limit: split it into
-slices each at most the limit above and send them in order — the first
-with mode "overwrite" (the default; it truncates any previous file), then
-each remaining slice with mode "append". The slices are concatenated
-verbatim on disk, so a base64 asset must be decoded to bytes first and
-split on byte boundaries (do not split the base64 text itself). This is
-how you get an over-limit asset in; the per-call limit still bounds each
-slice, and the cumulative budget below still bounds the whole file.
-
-A hosted workspace may also have a cumulative byte budget across all its
-files. A write (or append) that would push the total over that budget is
-rejected; call workspace_info to see the budget and remaining space before
-pushing.
-
-The path is resolved through the server's active workspace. In local
-mode any path is accepted; in scoped/hosted mode the path must be
-relative and stay within the workspace (traversal is rejected).`,
-			inputLimit, humanBytes(inputLimit), envMaxInputBytes)),
+Paths are workspace-relative in scoped/hosted mode (traversal rejected),
+any path in local mode. See the server instructions for the full file /
+upload guide.`,
+			inputLimit, humanBytes(inputLimit))),
 		mcp.WithString("path",
 			mcp.Required(),
 			mcp.Description("Destination path. Workspace-relative in scoped/hosted mode; any path in local mode."),
@@ -875,27 +876,21 @@ relative and stay within the workspace (traversal is rejected).`,
 	s.AddTool(putFileTool, handlePutFile(factory, store))
 
 	workspaceInfoTool := mcp.NewTool("workspace_info",
-		mcp.WithDescription(fmt.Sprintf(`Report the active workspace's storage limits and current usage.
+		mcp.WithDescription(`Report the active workspace's storage limits and current usage. Call
+this before pushing a large asset with put_file to see what will fit.
 
-Call this before pushing a large asset with put_file to check what will
-fit. Takes no arguments; returns JSON:
-  - per_call_limit_bytes / per_call_limit_human: the maximum size of a
-    single put_file payload, measured on DECODED bytes (see put_file).
-    Raise %s on the server to change it.
-  - usage_tracked: true in scoped/hosted mode, where the workspace is a
-    bounded per-tenant directory; false in local stdio mode, where the
-    workspace is the shared filesystem and has no size worth reporting.
-  - used_bytes / used_human: total bytes currently stored in the
-    workspace, measured live at call time. Present only when
-    usage_tracked is true.
-  - budget_bytes / budget_human: the cumulative cap on the workspace's
-    total size. Present only when a budget is configured; absent means
-    no cumulative cap (only the per-call limit applies).
-  - available_bytes / available_human: budget minus current usage,
-    floored at zero. Present only alongside budget_bytes.
+No arguments; returns JSON:
+  - per_call_limit_bytes / per_call_limit_human: max size of one put_file
+    payload, on DECODED bytes.
+  - usage_tracked: true in scoped/hosted mode (bounded per-tenant dir),
+    false in local stdio mode.
+  - used_bytes / used_human: total bytes stored, measured live (only when
+    usage_tracked).
+  - budget_bytes / available_bytes (+ *_human): the cumulative cap and
+    remaining space, present only when a budget is configured (absent =
+    no cap). A put_file over available_bytes is rejected.
 
-When budget_bytes is present, a put_file that would push used_bytes over
-it is rejected — check available_bytes before pushing a large asset.`, envMaxInputBytes)),
+See the server instructions for the full file / upload guide.`),
 	)
 	s.AddTool(workspaceInfoTool, handleWorkspaceInfo(factory, store))
 }
