@@ -8,6 +8,6 @@
     "report": "playwright show-report"
   },
   "devDependencies": {
-    "@playwright/test": "1.49.1"
+    "@playwright/test": "1.62.1"
   }
 }
