@@ -17,6 +17,7 @@
   --sl-color-orange-300: #ffa055;
   --sl-color-orange-500: #fb7600;
   --sl-color-orange-700: #b35400;
+  --sl-color-orange-800: #472a12;
   --sl-color-orange-900: #703500;
   --sl-color-gray-0: #ffffff;
   --sl-color-gray-50: #fafaf7;
@@ -25,6 +26,7 @@
   --sl-color-gray-300: #c7c7c4;
   --sl-color-gray-400: #a3a3a0;
   --sl-color-gray-500: #787878;
+  --sl-color-gray-550: #6e6e6e;
   --sl-color-gray-600: #5e5e5e;
   --sl-color-gray-700: #444444;
   --sl-color-gray-800: #2a2a2a;
@@ -34,11 +36,18 @@
   --sl-color-tinted-800: #0e2528;
   --sl-color-tinted-900: #06181a;
   --sl-color-green-100: #def0e3;
+  --sl-color-green-300: #6ecf8f;
   --sl-color-green-500: #1a7a3e;
+  --sl-color-green-800: #14402f;
   --sl-color-red-100: #f3dad7;
+  --sl-color-red-300: #f28b82;
   --sl-color-red-500: #b3271f;
+  --sl-color-red-800: #4a2622;
   --sl-color-amber-100: #f5e6b3;
+  --sl-color-amber-300: #e8bd57;
   --sl-color-amber-500: #b58400;
+  --sl-color-amber-600: #7d5600;
+  --sl-color-amber-800: #423616;
   --sl-motion-duration-instant: 0ms;
   --sl-motion-duration-fast: 120ms;
   --sl-motion-duration-base: 180ms;
@@ -102,9 +111,12 @@
   --sl-color-accent: var(--sl-color-orange-500);
   --sl-color-accent-hover: var(--sl-color-orange-700);
   --sl-color-accent-tint: var(--sl-color-orange-100);
+  --sl-color-on-accent: var(--sl-color-gray-900); /** Foreground on the accent fill. Deliberately the gray.900 primitive and not the `ink` role: `ink` flips to white in dark, while the accent fill stays orange.500 in both themes, so a themed foreground would break the pairing it exists to fix. gray.0 on accent measured 2.73. */
+  --sl-color-accent-text: var(--sl-color-orange-700); /** The accent used AS text on a page surface — links, standalone affordances. Separate from `accent` because the brand orange is a fill colour: orange.500 as text on white is 2.73. */
+  --sl-color-on-accent-tint: var(--sl-color-orange-900); /** Foreground on accent-tint. accent-hover on accent-tint measured 4.06. */
   --sl-color-ink: var(--sl-color-gray-900);
   --sl-color-body: var(--sl-color-gray-700);
-  --sl-color-muted: var(--sl-color-gray-500);
+  --sl-color-muted: var(--sl-color-gray-550);
   --sl-color-line: var(--sl-color-gray-200);
   --sl-color-surface: var(--sl-color-gray-0);
   --sl-color-paper: var(--sl-color-gray-50);
@@ -114,41 +126,102 @@
   --sl-color-line-dark: var(--sl-color-tinted-600);
   --sl-color-surface-dark: var(--sl-color-tinted-800);
   --sl-color-paper-dark: var(--sl-color-tinted-900);
+  --sl-color-accent-text-dark: var(--sl-color-orange-300);
+  --sl-color-accent-tint-dark: var(--sl-color-orange-800);
+  --sl-color-on-accent-tint-dark: var(--sl-color-orange-300);
   --sl-color-gain: var(--sl-color-green-500);
   --sl-color-gain-tint: var(--sl-color-green-100);
+  --sl-color-on-gain: var(--sl-color-gray-0);
+  --sl-color-gain-dark: var(--sl-color-green-300);
+  --sl-color-gain-tint-dark: var(--sl-color-green-800);
+  --sl-color-on-gain-dark: var(--sl-color-gray-900);
   --sl-color-loss: var(--sl-color-red-500);
   --sl-color-loss-tint: var(--sl-color-red-100);
-  --sl-color-warn: var(--sl-color-amber-500);
+  --sl-color-on-loss: var(--sl-color-gray-0);
+  --sl-color-loss-dark: var(--sl-color-red-300);
+  --sl-color-loss-tint-dark: var(--sl-color-red-800);
+  --sl-color-on-loss-dark: var(--sl-color-gray-900);
+  --sl-color-warn: var(--sl-color-amber-600);
   --sl-color-warn-tint: var(--sl-color-amber-100);
+  --sl-color-on-warn: var(--sl-color-gray-0);
+  --sl-color-warn-dark: var(--sl-color-amber-300);
+  --sl-color-warn-tint-dark: var(--sl-color-amber-800);
+  --sl-color-on-warn-dark: var(--sl-color-gray-900);
+  --sl-color-neutral-tint: var(--sl-color-gray-100); /** Quiet neutral container — muted pills, ghost-button hover. Exists because those surfaces were reading the gray.100 primitive directly, which does not move between themes: a light patch stayed light on a dark page, taking ghost-hover to 1.14 and the neutral pill to 2.22. */
+  --sl-color-on-neutral-tint: var(--sl-color-gray-600);
+  --sl-color-neutral-tint-dark: var(--sl-color-tinted-700);
+  --sl-color-on-neutral-tint-dark: var(--sl-color-gray-400);
   --sl-color-focus: var(--sl-color-orange-500);
 }
 
-/* ── Dark-mode primitive aliasing (post-build append, see build.ts) ── */
+/* ── Theme aliasing (post-build append, see build.ts) ── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --sl-color-ink:     var(--sl-color-ink-dark);
-    --sl-color-body:    var(--sl-color-body-dark);
-    --sl-color-muted:   var(--sl-color-muted-dark);
-    --sl-color-line:    var(--sl-color-line-dark);
-    --sl-color-surface: var(--sl-color-surface-dark);
-    --sl-color-paper:   var(--sl-color-paper-dark);
+    --sl-color-ink:             var(--sl-color-ink-dark);
+    --sl-color-body:            var(--sl-color-body-dark);
+    --sl-color-muted:           var(--sl-color-muted-dark);
+    --sl-color-line:            var(--sl-color-line-dark);
+    --sl-color-surface:         var(--sl-color-surface-dark);
+    --sl-color-paper:           var(--sl-color-paper-dark);
+    --sl-color-accent-text:     var(--sl-color-accent-text-dark);
+    --sl-color-accent-tint:     var(--sl-color-accent-tint-dark);
+    --sl-color-on-accent-tint:  var(--sl-color-on-accent-tint-dark);
+    --sl-color-neutral-tint:    var(--sl-color-neutral-tint-dark);
+    --sl-color-on-neutral-tint: var(--sl-color-on-neutral-tint-dark);
+    --sl-color-gain:            var(--sl-color-gain-dark);
+    --sl-color-gain-tint:       var(--sl-color-gain-tint-dark);
+    --sl-color-on-gain:         var(--sl-color-on-gain-dark);
+    --sl-color-loss:            var(--sl-color-loss-dark);
+    --sl-color-loss-tint:       var(--sl-color-loss-tint-dark);
+    --sl-color-on-loss:         var(--sl-color-on-loss-dark);
+    --sl-color-warn:            var(--sl-color-warn-dark);
+    --sl-color-warn-tint:       var(--sl-color-warn-tint-dark);
+    --sl-color-on-warn:         var(--sl-color-on-warn-dark);
   }
 }
 
-:root[data-theme="dark"] {
-  --sl-color-ink:     var(--sl-color-ink-dark);
-  --sl-color-body:    var(--sl-color-body-dark);
-  --sl-color-muted:   var(--sl-color-muted-dark);
-  --sl-color-line:    var(--sl-color-line-dark);
-  --sl-color-surface: var(--sl-color-surface-dark);
-  --sl-color-paper:   var(--sl-color-paper-dark);
+[data-theme="dark"] {
+  --sl-color-ink:             var(--sl-color-ink-dark);
+  --sl-color-body:            var(--sl-color-body-dark);
+  --sl-color-muted:           var(--sl-color-muted-dark);
+  --sl-color-line:            var(--sl-color-line-dark);
+  --sl-color-surface:         var(--sl-color-surface-dark);
+  --sl-color-paper:           var(--sl-color-paper-dark);
+  --sl-color-accent-text:     var(--sl-color-accent-text-dark);
+  --sl-color-accent-tint:     var(--sl-color-accent-tint-dark);
+  --sl-color-on-accent-tint:  var(--sl-color-on-accent-tint-dark);
+  --sl-color-neutral-tint:    var(--sl-color-neutral-tint-dark);
+  --sl-color-on-neutral-tint: var(--sl-color-on-neutral-tint-dark);
+  --sl-color-gain:            var(--sl-color-gain-dark);
+  --sl-color-gain-tint:       var(--sl-color-gain-tint-dark);
+  --sl-color-on-gain:         var(--sl-color-on-gain-dark);
+  --sl-color-loss:            var(--sl-color-loss-dark);
+  --sl-color-loss-tint:       var(--sl-color-loss-tint-dark);
+  --sl-color-on-loss:         var(--sl-color-on-loss-dark);
+  --sl-color-warn:            var(--sl-color-warn-dark);
+  --sl-color-warn-tint:       var(--sl-color-warn-tint-dark);
+  --sl-color-on-warn:         var(--sl-color-on-warn-dark);
 }
 
-:root[data-theme="light"] {
-  --sl-color-ink:     var(--sl-color-gray-900);
-  --sl-color-body:    var(--sl-color-gray-700);
-  --sl-color-muted:   var(--sl-color-gray-500);
-  --sl-color-line:    var(--sl-color-gray-200);
-  --sl-color-surface: var(--sl-color-gray-0);
-  --sl-color-paper:   var(--sl-color-gray-50);
+[data-theme="light"] {
+  --sl-color-ink:             var(--sl-color-gray-900);
+  --sl-color-body:            var(--sl-color-gray-700);
+  --sl-color-muted:           var(--sl-color-gray-550);
+  --sl-color-line:            var(--sl-color-gray-200);
+  --sl-color-surface:         var(--sl-color-gray-0);
+  --sl-color-paper:           var(--sl-color-gray-50);
+  --sl-color-accent-text:     var(--sl-color-orange-700);
+  --sl-color-accent-tint:     var(--sl-color-orange-100);
+  --sl-color-on-accent-tint:  var(--sl-color-orange-900);
+  --sl-color-neutral-tint:    var(--sl-color-gray-100);
+  --sl-color-on-neutral-tint: var(--sl-color-gray-600);
+  --sl-color-gain:            var(--sl-color-green-500);
+  --sl-color-gain-tint:       var(--sl-color-green-100);
+  --sl-color-on-gain:         var(--sl-color-gray-0);
+  --sl-color-loss:            var(--sl-color-red-500);
+  --sl-color-loss-tint:       var(--sl-color-red-100);
+  --sl-color-on-loss:         var(--sl-color-gray-0);
+  --sl-color-warn:            var(--sl-color-amber-600);
+  --sl-color-warn-tint:       var(--sl-color-amber-100);
+  --sl-color-on-warn:         var(--sl-color-gray-0);
 }
