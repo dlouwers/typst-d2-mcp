@@ -13,7 +13,25 @@ WORKDIR /src
 
 # Download deps separately so the layer is reused across source-only edits.
 COPY go.mod go.sum ./
-RUN go mod download
+
+# github.com/dlouwers/stormlantern-design-system is a private module (#80), so
+# this needs a credential. It arrives as a BuildKit secret, which is mounted
+# for the life of the RUN and never written to a layer.
+#
+# The credential is passed through GIT_CONFIG_COUNT/KEY/VALUE rather than
+# `git config --global`, deliberately: the latter writes the token into
+# /root/.gitconfig, and that file IS part of the layer. Env vars set on a
+# single RUN are not.
+#
+# A build without the secret fails here rather than later, which is the right
+# place: without it the module cannot be resolved at all. Locally:
+#   podman build --secret id=gh_token,env=GH_TOKEN .
+RUN --mount=type=secret,id=gh_token \
+    GOPRIVATE=github.com/dlouwers/* \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/gh_token)@github.com/.insteadOf" \
+    GIT_CONFIG_VALUE_0="https://github.com/" \
+    go mod download
 
 COPY . .
 
