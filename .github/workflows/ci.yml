@@ -49,6 +49,21 @@ jobs:
           curl -fsSL https://github.com/typst/typst/releases/download/v0.14.2/typst-x86_64-unknown-linux-musl.tar.xz \
             | tar -xJ -C /usr/local/bin --strip-components=1
 
+      # Before ANY go command: `go mod download` below, and the build that
+      # playwright's webServer shells out to, both resolve the private
+      # design-system module. See .github/actions/design-system-auth.
+      #
+      # Inert without the key, which since #80 means the job cannot build
+      # rather than merely skipping a check — a fork PR has no access to the
+      # private module. Dependabot runs see only Dependabot secrets, so
+      # DS_APP_PRIVATE_KEY must exist in that store too.
+      - name: Authenticate to the design system
+        if: env.HAS_DS_KEY == 'true'
+        uses: ./.github/actions/design-system-auth
+        with:
+          client-id: ${{ vars.DS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
+
       - name: Download dependencies
         timeout-minutes: 5
         run: go mod download
@@ -57,56 +72,6 @@ jobs:
       # committed so the image build stays toolchain-free. This catches a
       # forgotten re-sync after the design system changes.
       #
-      # Access is via a GitHub App rather than a PAT: the token is minted
-      # per run and expires in an hour, it is owned by the account rather
-      # than by a person whose access it would otherwise inherit, and
-      # there is no annual expiry to renew by hand. The app id is a repo
-      # variable (it is not secret); only the private key is a secret.
-      #
-      # Both steps stay inert unless DS_APP_PRIVATE_KEY is available (see
-      # HAS_DS_KEY above).
-      #
-      # That gate used to mean a fork PR or a fresh clone still BUILT without
-      # the key, because the design-system assets were committed here. Since
-      # #80 they are a private Go module, so without the key `go mod
-      # download` fails outright — inert now means "cannot build", not
-      # "builds without the extra check". That is inherent to depending on a
-      # private module and is the price of the version pinning it buys.
-      #
-      # Dependabot is the case to watch: Dependabot-triggered runs see only
-      # Dependabot secrets, never Actions secrets, so DS_APP_PRIVATE_KEY must
-      # be added to BOTH stores or every Dependabot PR here fails at module
-      # download.
-      - name: Mint a token for the design system
-        id: ds_token
-        if: env.HAS_DS_KEY == 'true'
-        timeout-minutes: 2
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.DS_APP_CLIENT_ID }}
-          private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
-          owner: dlouwers
-          repositories: stormlantern-design-system
-
-      # The design system is a private Go module, so `go mod download`
-      # needs credentials. Rewriting the https URL is the documented way to
-      # give the Go toolchain a token without a .netrc, and GOPRIVATE keeps
-      # the module off the public proxy and checksum database.
-      #
-      # This replaces a checkout of the design system plus a sync-and-diff
-      # step (#80). The App is the same one, with the same read-only scope;
-      # it now authenticates a dependency fetch instead of a file copy, and
-      # go.sum verifies what arrives.
-      - name: Authenticate the Go toolchain to the design system
-        if: env.HAS_DS_KEY == 'true'
-        env:
-          TOKEN: ${{ steps.ds_token.outputs.token }}
-        run: |
-          echo "GOPRIVATE=github.com/dlouwers/*" >> "$GITHUB_ENV"
-          git config --global \
-            url."https://x-access-token:${TOKEN}@github.com/".insteadOf \
-            "https://github.com/"
-
       - name: Run go vet
         timeout-minutes: 5
         run: go vet ./...
@@ -136,6 +101,8 @@ jobs:
   playwright:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      HAS_DS_KEY: ${{ secrets.DS_APP_PRIVATE_KEY != '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -145,6 +112,21 @@ jobs:
         with:
           go-version: '1.25'
           cache: true
+
+      # Before ANY go command: `go mod download` below, and the build that
+      # playwright's webServer shells out to, both resolve the private
+      # design-system module. See .github/actions/design-system-auth.
+      #
+      # Inert without the key, which since #80 means the job cannot build
+      # rather than merely skipping a check — a fork PR has no access to the
+      # private module. Dependabot runs see only Dependabot secrets, so
+      # DS_APP_PRIVATE_KEY must exist in that store too.
+      - name: Authenticate to the design system
+        if: env.HAS_DS_KEY == 'true'
+        uses: ./.github/actions/design-system-auth
+        with:
+          client-id: ${{ vars.DS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0

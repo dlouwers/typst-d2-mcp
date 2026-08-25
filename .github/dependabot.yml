@@ -27,6 +27,20 @@ updates:
       prefix: "ci(actions)"
     labels:
       - "dependencies"
+
+  # The composite action in .github/actions/ pins its own `uses:` by SHA and
+  # is NOT covered by the entry above: for the github-actions ecosystem,
+  # `directory: "/"` finds .github/workflows, not nested action.yml files.
+  # Each composite action needs its own directory entry, or its pin becomes
+  # the frozen-forever kind this file exists to prevent.
+  - package-ecosystem: "github-actions"
+    directory: "/.github/actions/design-system-auth"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(actions)"
+    labels:
+      - "dependencies"
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
