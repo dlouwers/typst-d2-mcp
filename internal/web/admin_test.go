@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -737,5 +738,84 @@ func TestAccess_ExpiredSessionPlainPostStays401(t *testing.T) {
 	}
 	if rec.Header().Get("HX-Redirect") != "" {
 		t.Error("HX-Redirect set on a non-htmx request")
+	}
+}
+
+// The design-system assets come from the Go module now, not from a copy
+// committed under static/vendor (#80). This asserts the whole URL surface
+// still resolves, because the swap has to be invisible to templates and to
+// components.js — both of which still reference /admin/static/vendor/... .
+func TestDesignSystemAssets_ServeFromTheModule(t *testing.T) {
+	f := newFixture(t)
+
+	for _, asset := range []string{
+		"/admin/static/vendor/stormlantern-tokens.css",
+		"/admin/static/vendor/sl-table.js",
+		"/admin/static/vendor/sl-card.js",
+		"/admin/static/vendor/sl-badge.js",
+		"/admin/static/vendor/sl-alert.js",
+		"/admin/static/vendor/lantern-mark.svg",
+		// Deliberately NOT from the design system: htmx is pinned and
+		// vendored by hand, and must keep being served locally.
+		"/admin/static/vendor/htmx.min.js",
+	} {
+		got := f.do(t, f.as(t, "", http.MethodGet, asset, nil))
+		if got.Code != http.StatusOK {
+			t.Errorf("%s: status %d, want 200", asset, got.Code)
+			continue
+		}
+		if got.Body.Len() == 0 {
+			t.Errorf("%s: served an empty body", asset)
+		}
+	}
+}
+
+// The stylesheet has to be a current one. Before #80 this repo served a
+// pre-0.2.0 build for a day after the fixes shipped, and nothing noticed —
+// so assert on a role that only exists in the release we depend on rather
+// than trusting that the bytes are whatever we last copied.
+func TestDesignSystemTokens_AreTheVersionWeDependOn(t *testing.T) {
+	f := newFixture(t)
+	got := f.do(t, f.as(t, "", http.MethodGet, "/admin/static/vendor/stormlantern-tokens.css", nil))
+	css := got.Body.String()
+
+	for _, role := range []string{
+		// Added in stormlantern-design-system#18; app.css uses accent-text.
+		"--sl-color-accent-text",
+		"--sl-color-on-accent",
+		// Theme blocks, unscoped since #20.
+		`[data-theme="dark"]`,
+	} {
+		if !strings.Contains(css, role) {
+			t.Errorf("served tokens.css is missing %s — it is not the release go.mod pins", role)
+		}
+	}
+	if strings.Contains(css, ":root[data-theme=") {
+		t.Error("served tokens.css has :root-scoped theme blocks; that is a pre-0.2.0 build")
+	}
+}
+
+// components.js imports its custom elements by URL. An import naming a
+// component the design system does not ship is a 404 in the browser that no
+// Go test would otherwise see — the same class of failure that bit
+// investor-buddy when an import outran its vendor sync.
+func TestComponentsJS_ImportsAllResolve(t *testing.T) {
+	f := newFixture(t)
+	src := f.do(t, f.as(t, "", http.MethodGet, "/admin/static/components.js", nil))
+	if src.Code != http.StatusOK {
+		t.Fatalf("components.js: status %d", src.Code)
+	}
+
+	imports := regexp.MustCompile(`import "\./(vendor/[a-z0-9.-]+\.js)"`).
+		FindAllStringSubmatch(src.Body.String(), -1)
+	if len(imports) == 0 {
+		t.Fatal("no imports found in components.js — the test is not testing anything")
+	}
+	for _, m := range imports {
+		url := "/admin/static/" + m[1]
+		got := f.do(t, f.as(t, "", http.MethodGet, url, nil))
+		if got.Code != http.StatusOK {
+			t.Errorf("components.js imports %s, which serves %d", m[1], got.Code)
+		}
 	}
 }

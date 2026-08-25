@@ -1,0 +1,52 @@
+name: Authenticate to the design system
+description: >
+  Mint a short-lived token for dlouwers/stormlantern-design-system and point
+  the Go toolchain at it, so `go mod download` can fetch the private module.
+
+# Factored out of ci.yml because both the build and playwright jobs need it,
+# and every Go command in either job depends on it having run. Two copies of
+# these steps is two things to keep in step — and a copy that silently falls
+# behind is exactly the failure that made this repo serve a stale design
+# system for a day (#80).
+
+inputs:
+  client-id:
+    description: GitHub App client id (a repository variable; not secret).
+    required: true
+  private-key:
+    description: GitHub App private key (a secret).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # A GitHub App rather than a PAT: minted per run, expires in an hour,
+    # owned by the account rather than by a person whose access it would
+    # otherwise inherit, and nothing to renew by hand each year.
+    # No timeout-minutes here: composite actions do not support it on
+    # steps, and the workflow rejects the file outright if you try. The
+    # per-step 2 minute cap this had as an inline step is therefore gone;
+    # the job-level timeout is what bounds a hung mint now.
+    - name: Mint a token
+      id: token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: dlouwers
+        repositories: stormlantern-design-system
+
+    # GOPRIVATE keeps the module off the public proxy and checksum database;
+    # url.insteadOf is how the Go toolchain gets a credential without a
+    # .netrc. Both must be in place before ANY go command that resolves
+    # modules — including `go mod download`, and including the build that
+    # playwright's webServer shells out to.
+    - name: Point the Go toolchain at it
+      shell: bash
+      env:
+        TOKEN: ${{ steps.token.outputs.token }}
+      run: |
+        echo "GOPRIVATE=github.com/dlouwers/*" >> "$GITHUB_ENV"
+        git config --global \
+          url."https://x-access-token:${TOKEN}@github.com/".insteadOf \
+          "https://github.com/"

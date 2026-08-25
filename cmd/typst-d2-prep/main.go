@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/preprocessor"
-	"github.com/dlouwers/typst-d2-mcp/internal/typst"
 	"github.com/dlouwers/typst-d2-mcp/internal/prerequisites"
+	"github.com/dlouwers/typst-d2-mcp/internal/typst"
 )
 
 var version = "0.1.0" // Overridden by ldflags during release builds

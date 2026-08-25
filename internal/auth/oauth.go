@@ -37,12 +37,12 @@ import (
 )
 
 const (
-	pathProtectedResource     = "/.well-known/oauth-protected-resource"
-	pathAuthorizationServer   = "/.well-known/oauth-authorization-server"
-	pathRegister              = "/register"
-	pathAuthorize             = "/authorize"
-	pathToken                 = "/token"
-	pathGitHubCallback        = "/auth/github/callback"
+	pathProtectedResource   = "/.well-known/oauth-protected-resource"
+	pathAuthorizationServer = "/.well-known/oauth-authorization-server"
+	pathRegister            = "/register"
+	pathAuthorize           = "/authorize"
+	pathToken               = "/token"
+	pathGitHubCallback      = "/auth/github/callback"
 
 	defaultScope = "mcp"
 )

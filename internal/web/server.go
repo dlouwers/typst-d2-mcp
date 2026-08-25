@@ -3,8 +3,8 @@
 // audit log.
 //
 // Conventions follow the sibling investor-buddy project: server-rendered
-// html/template pages, htmx for interactions, vendored Stormlantern
-// design-system assets embedded in the binary, and action handlers that
+// html/template pages, htmx for interactions, Stormlantern design-system
+// assets embedded from its Go module, and action handlers that
 // reply in dual mode — htmx clients get an out-of-band flash fragment,
 // plain form posts get a redirect with a banner. That dual mode is what
 // makes the UI work with JavaScript disabled; nothing here depends on
@@ -120,7 +120,12 @@ func (s *Server) Handler() http.Handler {
 	if err != nil {
 		panic(fmt.Sprintf("web: static subtree: %v", err)) // embed is compile-time; this cannot fail at runtime
 	}
-	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServerFS(static)))
+	// vendor/ paths the design system owns are served from its Go module
+	// rather than from a copy committed here; everything else, including the
+	// deliberately hand-pinned htmx, comes from the local tree. See
+	// designsystem.go.
+	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/",
+		http.FileServerFS(designSystemFS{local: static})))
 
 	mux.Handle("GET /admin/{$}", s.requireAdmin(http.HandlerFunc(s.handleUsers)))
 	mux.Handle("GET /admin/audit", s.requireAdmin(http.HandlerFunc(s.handleAudit)))
