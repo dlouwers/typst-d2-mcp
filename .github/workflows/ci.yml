@@ -63,9 +63,20 @@ jobs:
       # there is no annual expiry to renew by hand. The app id is a repo
       # variable (it is not secret); only the private key is a secret.
       #
-      # All three steps stay inert unless DS_APP_PRIVATE_KEY is available (see
-      # HAS_DS_KEY above), so a Dependabot run, a fork PR, or a fresh clone
-      # builds without them rather than failing on the missing key.
+      # Both steps stay inert unless DS_APP_PRIVATE_KEY is available (see
+      # HAS_DS_KEY above).
+      #
+      # That gate used to mean a fork PR or a fresh clone still BUILT without
+      # the key, because the design-system assets were committed here. Since
+      # #80 they are a private Go module, so without the key `go mod
+      # download` fails outright — inert now means "cannot build", not
+      # "builds without the extra check". That is inherent to depending on a
+      # private module and is the price of the version pinning it buys.
+      #
+      # Dependabot is the case to watch: Dependabot-triggered runs see only
+      # Dependabot secrets, never Actions secrets, so DS_APP_PRIVATE_KEY must
+      # be added to BOTH stores or every Dependabot PR here fails at module
+      # download.
       - name: Mint a token for the design system
         id: ds_token
         if: env.HAS_DS_KEY == 'true'
@@ -77,25 +88,24 @@ jobs:
           owner: dlouwers
           repositories: stormlantern-design-system
 
-      - name: Check out design system
+      # The design system is a private Go module, so `go mod download`
+      # needs credentials. Rewriting the https URL is the documented way to
+      # give the Go toolchain a token without a .netrc, and GOPRIVATE keeps
+      # the module off the public proxy and checksum database.
+      #
+      # This replaces a checkout of the design system plus a sync-and-diff
+      # step (#80). The App is the same one, with the same read-only scope;
+      # it now authenticates a dependency fetch instead of a file copy, and
+      # go.sum verifies what arrives.
+      - name: Authenticate the Go toolchain to the design system
         if: env.HAS_DS_KEY == 'true'
-        timeout-minutes: 3
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: dlouwers/stormlantern-design-system
-          token: ${{ steps.ds_token.outputs.token }}
-          path: .design-system
-          persist-credentials: false
-
-      - name: Check vendored assets are in sync
-        if: env.HAS_DS_KEY == 'true'
-        timeout-minutes: 2
         env:
-          STORMLANTERN_DS: .design-system
+          TOKEN: ${{ steps.ds_token.outputs.token }}
         run: |
-          ./scripts/sync-vendor.sh
-          git diff --exit-code -- internal/web/static/vendor \
-            || { echo "::error::vendored design-system assets are stale; run scripts/sync-vendor.sh"; exit 1; }
+          echo "GOPRIVATE=github.com/dlouwers/*" >> "$GITHUB_ENV"
+          git config --global \
+            url."https://x-access-token:${TOKEN}@github.com/".insteadOf \
+            "https://github.com/"
 
       - name: Run go vet
         timeout-minutes: 5
