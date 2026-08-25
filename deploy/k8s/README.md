@@ -127,6 +127,16 @@ public by default. If you flip the package to private:
 
 3. Uncomment the `sealed-ghcr-pull.yaml` line in the overlay's
    kustomization.yaml.
+4. Add the pull-secret reference back to the pod spec in
+   `base/deployment.yaml` — it is deliberately absent while the package
+   is public, because naming a missing Secret makes the kubelet log a
+   `FailedToRetrieveImagePullSecret` warning on every pod creation:
+
+   ```yaml
+   spec:
+     imagePullSecrets:
+       - name: ghcr-pull
+   ```
 
 ## Observability
 
