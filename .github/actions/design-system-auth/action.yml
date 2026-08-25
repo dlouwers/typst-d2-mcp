@@ -75,6 +75,15 @@ inputs:
     description: GitHub App private key (a secret).
     required: true
 
+outputs:
+  token:
+    description: >
+      The minted installation token. Exposed for callers that need the raw
+      value rather than a configured git — the container build passes it to
+      BuildKit as a secret, because `go mod download` runs inside the image
+      build where the runner's git config does not reach.
+    value: ${{ steps.token.outputs.token }}
+
 runs:
   using: composite
   steps:

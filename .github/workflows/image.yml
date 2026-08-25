@@ -79,11 +79,25 @@ jobs:
             type=semver,pattern=v{{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
+      # Same app, same read-only scope as CI. The image build cannot use the
+      # runner's git config, so it needs the raw token to pass to BuildKit.
+      - name: Authenticate to the design system
+        id: ds_auth
+        uses: ./.github/actions/design-system-auth
+        with:
+          client-id: ${{ vars.DS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
+
       - name: Build & push image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: ./Dockerfile
+          # The build resolves a private Go module; see the Dockerfile.
+          # BuildKit keeps this out of the image layers and out of the
+          # build cache exported to GHA.
+          secrets: |
+            gh_token=${{ steps.ds_auth.outputs.token }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
