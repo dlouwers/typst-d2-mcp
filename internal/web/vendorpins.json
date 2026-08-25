@@ -1,8 +1,8 @@
 {
   "vendor/htmx.min.js": {
     "package": "htmx.org",
-    "version": "2.0.3",
-    "sha256": "491955cd1810747d7d7b9ccb936400afb760e06d25d53e4572b64b6563b2784e",
-    "url": "https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"
+    "version": "2.0.10",
+    "sha256": "71ea67185bfa8c98c39d31717c6fce5d852370fcdfd129db4543774d3145c0de",
+    "url": "https://unpkg.com/htmx.org@2.0.10/dist/htmx.min.js"
   }
 }
