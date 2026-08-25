@@ -23,9 +23,12 @@ runs:
     # A GitHub App rather than a PAT: minted per run, expires in an hour,
     # owned by the account rather than by a person whose access it would
     # otherwise inherit, and nothing to renew by hand each year.
+    # No timeout-minutes here: composite actions do not support it on
+    # steps, and the workflow rejects the file outright if you try. The
+    # per-step 2 minute cap this had as an inline step is therefore gone;
+    # the job-level timeout is what bounds a hung mint now.
     - name: Mint a token
       id: token
-      timeout-minutes: 2
       uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
       with:
         client-id: ${{ inputs.client-id }}
