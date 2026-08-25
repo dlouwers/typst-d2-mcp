@@ -28,6 +28,25 @@
 # build would otherwise need a token. Point STORMLANTERN_DS at the
 # checkout if it is not the default sibling directory.
 #
+# NOTHING HERE PINS A VERSION. This copies from whatever commit the
+# checkout is on, and CI checks out the design system's default branch
+# HEAD, so the vendored bytes are "whatever main was when someone last
+# ran this". There is no tag, version or SHA recorded anywhere in this
+# repo, which is why staleness is invisible rather than reported: the CI
+# check only fires once main moves past what is committed here, and if
+# nothing pushes to this repo in the meantime, nobody finds out.
+#
+# That is how this repo ended up serving ten WCAG failures for a day
+# after they were fixed upstream (#80).
+#
+# A provenance stamp written into vendor/ was considered and rejected:
+# recording the design system's HEAD would fail this repo's CI on every
+# unrelated commit there, and recording its nearest tag would be a lie
+# whenever main is ahead of it. The real fix is to consume a versioned
+# artifact instead of copying files —
+# dlouwers/stormlantern-design-system#21 proposes publishing a Go module,
+# after which go.mod pins the version and `go mod vendor` verifies it.
+#
 # htmx is NOT synced here. It is pinned and vendored once by hand
 # (currently 2.0.3, matching investor-buddy); bumping it is a deliberate
 # act, not a side effect of syncing the design system.

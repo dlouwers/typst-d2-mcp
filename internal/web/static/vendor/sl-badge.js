@@ -38,11 +38,11 @@ class SlBadge extends HTMLElement {
         }
         :host([variant="info"]) .pill {
           background: var(--sl-color-accent-tint);
-          color: var(--sl-color-accent-hover);
+          color: var(--sl-color-on-accent-tint);
         }
         :host([variant="neutral"]) .pill {
-          background: var(--sl-color-gray-100);
-          color: var(--sl-color-muted);
+          background: var(--sl-color-neutral-tint);
+          color: var(--sl-color-on-neutral-tint);
         }
       </style>
       <span class="pill" part="pill"><slot></slot></span>
