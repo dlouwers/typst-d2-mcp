@@ -41,6 +41,25 @@ updates:
       prefix: "ci(actions)"
     labels:
       - "dependencies"
+  # playwright/package.json is the only npm manifest in this repo and had no
+  # ecosystem watching it at all: @playwright/test has been pinned at 1.49.1
+  # while 1.62.1 shipped, with no PR ever opened. The sibling repo had the
+  # same hole for a different reason — its npm entry pointed at a different
+  # manifest — and the effect was identical (#85).
+  #
+  # Note what this still does NOT cover: internal/web/static/vendor/htmx.min.js
+  # is vendored by hand and appears in no manifest, so Dependabot cannot see
+  # it and never could. That gap is closed by vendorpins.json plus the weekly
+  # registry check, not here.
+  - package-ecosystem: "npm"
+    directory: "/playwright"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build(deps)"
+    labels:
+      - "dependencies"
+
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
