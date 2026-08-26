@@ -11,9 +11,20 @@ import (
 
 // Compile takes preprocessed Typst content and compiles it to PDF.
 // Creates a temporary .typ file, runs typst compile, then cleans up.
+//
+// The temporary file is staged in the OUTPUT directory, not in /tmp.
+// typst resolves a document's relative paths against the directory of
+// the file it is handed, so staging elsewhere breaks every
+// #image("logo.png") in the document — with an error that names /tmp
+// and reads like a bug in the document rather than in this function.
 func Compile(content, outputFile string) error {
+	stageDir := filepath.Dir(outputFile)
+	if stageDir == "" {
+		stageDir = "."
+	}
+
 	// Create temporary file
-	tmpFile, err := os.CreateTemp("", "typst-d2-*.typ")
+	tmpFile, err := os.CreateTemp(stageDir, ".typst-d2-stage-*.typ")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
