@@ -388,6 +388,10 @@ func templateInstructions() string {
   returns the exact import string and what each package exports; this
   section can only describe the built-in ones.
 
+  If the look someone wants does not exist yet, write it once and
+  publish_template it into your own namespace rather than restyling
+  each document. Everyone has a namespace, so nothing needs granting.
+
     #import "@%[1]s/%[2]s:%[3]s": report, adr
 
   report — owns the look; you write whatever content suits.
@@ -1080,6 +1084,45 @@ An empty list means no template is installed for you — style the
 document yourself, or ask an administrator to publish one.`),
 	)
 	s.AddTool(listTemplatesTool, handleListTemplates(store))
+
+	publishTemplateTool := mcp.NewTool("publish_template",
+		mcp.WithDescription(`Publish a document template into a namespace you own.
+
+Everyone has their own namespace, so you can publish without anyone
+granting you anything. list_templates shows which namespaces are yours.
+
+Put the package's files in a workspace directory with put_file first:
+
+  my-template/typst.toml       [package] name/version/entrypoint
+  my-template/lib.typ          #let report(title: "Untitled", body) = { … }
+  my-template/assets/logo.svg  optional — a package may ship its own files
+  my-template/fonts/Brand.ttf  optional — and its own typefaces
+
+Then publish that directory. THE TEMPLATE IS COMPILED BEFORE IT IS
+ACCEPTED: if it does not compile, nothing is published and you get the
+typst error. That check exists because a broken template does not fail
+for you — it fails for everyone who imports it afterwards.
+
+A published version is IMMUTABLE. Documents pin what they import, so
+replacing 1.0.0 would change how already-written documents render.
+Publish 1.0.1 instead; the old version keeps working.`),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("Workspace directory holding typst.toml and the entrypoint."),
+		),
+		mcp.WithString("namespace",
+			mcp.Required(),
+			mcp.Description("Namespace name to publish into. Must be one you own — see list_templates."),
+		),
+		mcp.WithString("version",
+			mcp.Required(),
+			mcp.Description(`Package version, major.minor.patch (e.g. "1.0.0"). typst rejects any other shape.`),
+		),
+		mcp.WithString("name",
+			mcp.Description(`Package name within the namespace; defaults to "templates", giving @you/templates:1.0.0.`),
+		),
+	)
+	s.AddTool(publishTemplateTool, handlePublishTemplate(factory, store))
 }
 
 func registerResources(s *server.MCPServer, factory workspace.Factory) {
