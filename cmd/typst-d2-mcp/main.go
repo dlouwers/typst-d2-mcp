@@ -57,6 +57,7 @@ const (
 	envWorkspaceBudget = "TYPST_D2_MCP_WORKSPACE_BUDGET_BYTES"
 
 	envAuth            = "TYPST_D2_MCP_AUTH"
+	envDevUser         = "TYPST_D2_MCP_DEV_USER"
 	envDB              = "TYPST_D2_MCP_DB"
 	envPublicURL       = "TYPST_D2_MCP_PUBLIC_URL"
 	envGitHubID        = "TYPST_D2_MCP_GITHUB_CLIENT_ID"
@@ -661,8 +662,26 @@ func selectAuth() (auth.Backend, *gitHubHandlers, *authdb.Store, func(), error) 
 			authorize:           gh.ServeAuthorize,
 			token:               gh.ServeToken,
 		}, store, closer, nil
+	case "dev":
+		// Real identities, no credentials. Selected explicitly and
+		// never as a fallback, and refused on a non-loopback bind (see
+		// auth.RequireLoopback, enforced in serve).
+		dbPath := os.Getenv(envDB)
+		if dbPath == "" {
+			return nil, nil, nil, nil, fmt.Errorf("%s=dev requires %s to be set", envAuth, envDB)
+		}
+		store, err := authdb.Open(dbPath)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("open auth db: %w", err)
+		}
+		dev := &auth.Dev{
+			Store:        store,
+			DefaultLogin: os.Getenv(envDevUser),
+			AdminLogins:  parseAllowlist(os.Getenv(envAdmins)),
+		}
+		return dev, nil, store, func() { _ = store.Close() }, nil
 	default:
-		return nil, nil, nil, nil, fmt.Errorf("unknown %s=%q (expected none or github)", envAuth, mode)
+		return nil, nil, nil, nil, fmt.Errorf("unknown %s=%q (expected none, github or dev)", envAuth, mode)
 	}
 }
 
@@ -698,6 +717,18 @@ func serve(s *server.MCPServer, backend auth.Backend, gh *gitHubHandlers, factor
 		addr := os.Getenv(envAddr)
 		if addr == "" {
 			addr = defaultAddr
+		}
+		// Dev auth grants any identity to anyone who can reach the
+		// port, so a non-loopback bind is not something to warn about.
+		// Refusing to start is the only guard that survives somebody
+		// leaving AUTH=dev set in an environment where it stops being
+		// harmless.
+		if _, isDev := backend.(*auth.Dev); isDev {
+			if err := auth.RequireLoopback(addr); err != nil {
+				return err
+			}
+			slog.Warn("DEV AUTH ENABLED — every request is whoever it says it is",
+				"header", auth.DevUserHeader, "addr", addr)
 		}
 		path := os.Getenv(envPath)
 		if path == "" {
