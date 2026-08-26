@@ -71,16 +71,16 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	// is an error to correct, not something to silently transform.
 	slug := strings.TrimSpace(r.PostFormValue("slug"))
 	name := strings.TrimSpace(r.PostFormValue("display_name"))
-	if err := authdb.ValidateSlug(slug); err != nil {
+	if err := authdb.ValidateName(slug); err != nil {
 		s.respondOrgAction(w, r, flashError, err.Error())
 		return
 	}
 	if err := s.cfg.Store.CreateOrg(r.Context(), adminLogin(r.Context()), slug, name); err != nil {
-		if errors.Is(err, authdb.ErrSlugTaken) {
+		if errors.Is(err, authdb.ErrNameTaken) {
 			s.respondOrgAction(w, r, flashError, "an owner named "+slug+" already exists")
 			return
 		}
-		if errors.Is(err, authdb.ErrInvalidSlug) {
+		if errors.Is(err, authdb.ErrInvalidName) {
 			s.respondOrgAction(w, r, flashError, err.Error())
 			return
 		}
@@ -99,7 +99,7 @@ func (s *Server) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := strings.ToLower(strings.TrimSpace(r.PostFormValue("slug")))
 	if err := s.cfg.Store.DeleteOrg(r.Context(), adminLogin(r.Context()), slug); err != nil {
-		if errors.Is(err, authdb.ErrNoSuchOrg) {
+		if errors.Is(err, authdb.ErrNoSuchNamespace) {
 			s.respondOrgAction(w, r, flashError, "no organisation named "+slug)
 			return
 		}
@@ -121,7 +121,7 @@ func (s *Server) handleAddOrgMember(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, authdb.ErrNoSuchUser):
 			s.respondOrgAction(w, r, flashError, login+" has not signed in yet, so there is no account to add")
-		case errors.Is(err, authdb.ErrNoSuchOrg):
+		case errors.Is(err, authdb.ErrNoSuchNamespace):
 			s.respondOrgAction(w, r, flashError, "no organisation named "+slug)
 		case errors.Is(err, authdb.ErrAlreadyMember):
 			s.respondOrgAction(w, r, flashNotice, login+" is already a member of "+slug)

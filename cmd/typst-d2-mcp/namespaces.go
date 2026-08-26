@@ -30,39 +30,53 @@ import (
 // $XDG_CACHE_HOME, so the `@preview/based` import that every
 // preprocessed document carries is unaffected.
 
-// builtinNamespace is readable by every caller. It is the house style —
-// the default the templates exist to provide — so gating it on
+// builtinNamespace is the name every caller can import. It is the house
+// style — the default the templates exist to provide — so gating it on
 // membership would both break every document that already imports it and
-// leave a new user with no templates at all.
-const builtinNamespace = templateNamespace
+// leave a new user with no templates at all. Its name and its namespace
+// id are the same string, so the tree the image seeds needs no special
+// case.
+const builtinNamespace = authdb.BuiltinNamespaceID
 
-// allowedNamespaces returns the package namespaces a caller may import,
-// sorted and free of duplicates. Without a store (stdio, or an
-// unauthenticated deployment) there are no organisations to resolve and
-// the built-in is the whole answer.
-func allowedNamespaces(ctx context.Context, store *authdb.Store, id identity.Identity) ([]string, error) {
-	allowed := map[string]bool{builtinNamespace: true}
+// allowedNamespaces returns the namespace NAMES a caller may import,
+// each mapped to the namespace id that holds the packages.
+//
+// The indirection is the point. Names are pointers: a namespace keeps
+// its id for life, so renaming one — or giving a personal namespace a
+// proper name when it becomes shared — rebinds a pointer instead of
+// moving content, and the old name goes on resolving so documents that
+// already import it never break. Several names mapping to one id is an
+// alias, and costs nothing to support.
+//
+// Without a store (stdio, or an unauthenticated deployment) there are no
+// memberships to resolve and the built-in is the whole answer.
+func allowedNamespaces(ctx context.Context, store *authdb.Store, id identity.Identity) (map[string]string, error) {
+	allowed := map[string]string{builtinNamespace: authdb.BuiltinNamespaceID}
 
 	if store != nil && !id.IsAnonymous() {
-		orgs, err := store.OrgsForUser(ctx, id.UserID)
+		owned, err := store.NamespacesForUser(ctx, id.UserID)
 		if err != nil {
 			// Fail closed. Falling back to "everything" on a database
 			// error would turn a transient fault into a cross-tenant
 			// read, which is the one outcome this function exists to
 			// prevent.
-			return nil, fmt.Errorf("resolve organisations: %w", err)
+			return nil, fmt.Errorf("resolve namespaces: %w", err)
 		}
-		for _, slug := range orgs {
-			allowed[slug] = true
+		for name, nsID := range owned {
+			allowed[name] = nsID
 		}
 	}
+	return allowed, nil
+}
 
+// sortedNames is the deterministic ordering callers report in.
+func sortedNames(allowed map[string]string) []string {
 	out := make([]string, 0, len(allowed))
-	for slug := range allowed {
-		out = append(out, slug)
+	for name := range allowed {
+		out = append(out, name)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out
 }
 
 // packageView builds a temporary XDG_DATA_HOME exposing only the given
@@ -73,7 +87,7 @@ func allowedNamespaces(ctx context.Context, store *authdb.Store, id identity.Ide
 // A namespace with no directory in the store is skipped rather than
 // failing: an organisation exists in the schema before anyone publishes
 // a template to it (rung 5), and that is not an error.
-func packageView(dataDir string, allowed []string) (string, func(), error) {
+func packageView(dataDir string, allowed map[string]string) (string, func(), error) {
 	viewRoot, err := os.MkdirTemp("", "typst-d2-pkgview-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create package view: %w", err)
@@ -86,15 +100,18 @@ func packageView(dataDir string, allowed []string) (string, func(), error) {
 		return "", nil, fmt.Errorf("create package view: %w", err)
 	}
 
+	// The store is keyed by namespace id; the view is keyed by name.
+	// That one hop is where a rename becomes free — and where two names
+	// for the same namespace become two links to one directory.
 	realPkgs := filepath.Join(dataDir, "typst", "packages")
-	for _, slug := range allowed {
-		src := filepath.Join(realPkgs, slug)
+	for _, name := range sortedNames(allowed) {
+		src := filepath.Join(realPkgs, allowed[name])
 		if _, statErr := os.Stat(src); statErr != nil {
 			continue // namespace exists, nothing published to it yet
 		}
-		if linkErr := os.Symlink(src, filepath.Join(pkgDir, slug)); linkErr != nil {
+		if linkErr := os.Symlink(src, filepath.Join(pkgDir, name)); linkErr != nil {
 			cleanup()
-			return "", nil, fmt.Errorf("link namespace %s: %w", slug, linkErr)
+			return "", nil, fmt.Errorf("link namespace %s: %w", name, linkErr)
 		}
 	}
 	return viewRoot, cleanup, nil

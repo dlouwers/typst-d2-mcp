@@ -62,7 +62,7 @@ func TestAllowedNamespaces_BuiltinAlwaysPresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] != builtinNamespace {
+	if len(got) != 1 || got[builtinNamespace] != authdb.BuiltinNamespaceID {
 		t.Errorf("allowedNamespaces = %v, want just %q", got, builtinNamespace)
 	}
 }
@@ -78,7 +78,7 @@ func TestAllowedNamespaces_AnonymousGetsBuiltinOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] != builtinNamespace {
+	if len(got) != 1 || got[builtinNamespace] == "" {
 		t.Errorf("allowedNamespaces = %v, want just %q", got, builtinNamespace)
 	}
 }
@@ -104,16 +104,23 @@ func TestAllowedNamespaces_MembershipDecides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"acme", builtinNamespace}; !equalStrings(got, want) {
-		t.Errorf("member sees %v, want %v", got, want)
+	if got["acme"] == "" {
+		t.Errorf("member cannot see acme: %v", got)
+	}
+	// And her own personal namespace, which exists from first sign-in.
+	if got[authdb.DerivedName(1)] == "" {
+		t.Errorf("member cannot see her own namespace: %v", got)
 	}
 
 	got, err = allowedNamespaces(ctx, store, outsider)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{builtinNamespace}; !equalStrings(got, want) {
-		t.Errorf("outsider sees %v, want %v", got, want)
+	if got["acme"] != "" {
+		t.Errorf("outsider can see acme: %v", got)
+	}
+	if got[builtinNamespace] == "" {
+		t.Errorf("outsider lost the built-in: %v", got)
 	}
 }
 
@@ -124,7 +131,7 @@ func TestPackageView_ExposesOnlyAllowed(t *testing.T) {
 	writePackage(t, data, "acme", "1.0.0")
 	writePackage(t, data, "globex", "1.0.0")
 
-	view, cleanup, err := packageView(data, []string{"house", "acme"})
+	view, cleanup, err := packageView(data, map[string]string{"house": "house", "acme": "acme"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +156,7 @@ func TestPackageView_UnpublishedNamespaceIsSkipped(t *testing.T) {
 	data := t.TempDir()
 	writePackage(t, data, "house", "0.1.0")
 
-	view, cleanup, err := packageView(data, []string{"house", "brand-new-org"})
+	view, cleanup, err := packageView(data, map[string]string{"house": "house", "brand-new-org": "ns-unpublished"})
 	if err != nil {
 		t.Fatalf("an org with nothing published broke the view: %v", err)
 	}
@@ -163,7 +170,7 @@ func TestPackageView_UnpublishedNamespaceIsSkipped(t *testing.T) {
 func TestPackageView_CleanupRemovesIt(t *testing.T) {
 	data := t.TempDir()
 	writePackage(t, data, "house", "0.1.0")
-	view, cleanup, err := packageView(data, []string{"house"})
+	view, cleanup, err := packageView(data, map[string]string{"house": "house"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,6 +265,20 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
+// writePackageForName publishes a package into whatever namespace a
+// name currently points at. Content lives under the namespace ID, never
+// the name — that indirection is what makes a rename free — so a test
+// that wants a package reachable as "@acme" has to resolve first.
+func writePackageForName(t *testing.T, store *authdb.Store, dataDir, name, version string) string {
+	t.Helper()
+	id, err := store.ResolveName(t.Context(), name)
+	if err != nil {
+		t.Fatalf("resolve %q: %v", name, err)
+	}
+	writePackage(t, dataDir, id, version)
+	return id
+}
+
 // writePackageWithAsset builds a template package that ships a logo and
 // references it from lib.typ by a path relative to the package root.
 func writePackageWithAsset(t *testing.T, dataDir, namespace, version string) {
@@ -319,7 +340,6 @@ func TestCompile_OrgTemplateAssetResolves(t *testing.T) {
 
 	data := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", data)
-	writePackageWithAsset(t, data, "acme", "1.0.0")
 
 	store := newTestStore(t)
 	if err := store.CreateOrg(t.Context(), "admin", "acme", "Acme"); err != nil {
@@ -329,6 +349,11 @@ func TestCompile_OrgTemplateAssetResolves(t *testing.T) {
 	if err := store.AddOrgMember(t.Context(), "admin", "acme", "member"); err != nil {
 		t.Fatal(err)
 	}
+	nsID, err := store.ResolveName(t.Context(), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackageWithAsset(t, data, nsID, "1.0.0")
 
 	root := t.TempDir()
 	factory := workspace.TenantFactory{Root: root}
@@ -427,5 +452,123 @@ func TestCompile_TemplateFontResolves(t *testing.T) {
 	}
 	if got := resultText(res); strings.Contains(strings.ToLower(got), "unknown font family") {
 		t.Errorf("a font shipped with the template was not resolved:\n%s", got)
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// The property the whole reshape exists for, end to end through real
+// typst: after a namespace is given a proper name, BOTH the new name and
+// the one documents already import resolve — to the same packages, which
+// never moved.
+//
+// Under a design where the name is the identity this is impossible: the
+// rename either moves the content and breaks the old import, or does not
+// happen. That is why GitHub's account-to-organisation conversion is a
+// migration, and it is the trap this model exists to avoid.
+func TestCompile_RenameDoesNotBreakExistingDocuments(t *testing.T) {
+	requireTypst(t)
+
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	// This test compiles three times on purpose; the point is the third.
+	t.Setenv(envQuotaPerDay, "100")
+
+	store := newTestStore(t)
+	user := seedUser(t, store, "founder", 1)
+	nsID, err := store.EnsurePersonalNamespace(t.Context(), user.UserID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackage(t, data, nsID, "1.0.0")
+	derived := authdb.DerivedName(1)
+
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), user)
+
+	compileImporting := func(t *testing.T, file, namespace string) *mcp.CallToolResult {
+		t.Helper()
+		src := "#import \"@" + namespace + "/templates:1.0.0\": mark\n#mark()\n"
+		if res := putFileStore(t, ctx, factory, store, file, src); res.IsError {
+			t.Fatalf("put_file: %s", resultText(res))
+		}
+		req := mcp.CallToolRequest{}
+		req.Params.Name = "compile_typst_with_d2"
+		req.Params.Arguments = map[string]any{"file_path": file}
+		res, err := handleCompileTypst(factory, store)(ctx, req)
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		return res
+	}
+
+	// A document written before the upgrade.
+	if res := compileImporting(t, "before.typ", derived); res.IsError {
+		t.Fatalf("derived name did not compile: %s", resultText(res))
+	}
+
+	// She picks a proper name.
+	if err := store.AddName(t.Context(), user.UserID, nsID, "stormlantern", "Stormlantern"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The new name works...
+	if res := compileImporting(t, "after.typ", "stormlantern"); res.IsError {
+		t.Fatalf("new name did not compile: %s", resultText(res))
+	}
+	// ...and the old document still compiles, unchanged.
+	if res := compileImporting(t, "before.typ", derived); res.IsError {
+		t.Fatalf("the rename broke a document importing the old name: %s", resultText(res))
+	}
+}
+
+// A name pointing at someone else's namespace must not become a way in.
+func TestCompile_ANameOnlyReachesItsOwnNamespace(t *testing.T) {
+	requireTypst(t)
+
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+
+	store := newTestStore(t)
+	owner := seedUser(t, store, "owner", 1)
+	other := seedUser(t, store, "other", 2)
+
+	ownerNS, err := store.EnsurePersonalNamespace(t.Context(), owner.UserID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackage(t, data, ownerNS, "1.0.0")
+	if err := store.AddName(t.Context(), owner.UserID, ownerNS, "private-brand", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), other)
+
+	src := "#import \"@private-brand/templates:1.0.0\": mark\n#mark()\n"
+	if res := putFileStore(t, ctx, factory, store, "doc.typ", src); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "compile_typst_with_d2"
+	req.Params.Arguments = map[string]any{"file_path": "doc.typ"}
+	res, err := handleCompileTypst(factory, store)(ctx, req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("a non-member imported another namespace by name")
+	}
+	if got := resultText(res); !strings.Contains(got, "package not found") {
+		t.Errorf("expected an unresolved package, got: %s", got)
 	}
 }

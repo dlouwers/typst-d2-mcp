@@ -23,7 +23,7 @@ func TestOrgs_CreateAddRemoveDelete(t *testing.T) {
 	// Add a member.
 	f.do(t, f.as(t, "dlouwers", http.MethodPost, "/admin/orgs/members/add",
 		url.Values{"slug": {"acme"}, "login": {"octocat"}}))
-	if got, _ := f.store.OrgsForUser(ctx, "gh:42"); len(got) != 1 || got[0] != "acme" {
+	if got, _ := f.store.NamespacesForUser(ctx, "gh:42"); got["acme"] == "" {
 		t.Fatalf("member not added: %v", got)
 	}
 
@@ -39,7 +39,7 @@ func TestOrgs_CreateAddRemoveDelete(t *testing.T) {
 	// Remove the member.
 	f.do(t, f.as(t, "dlouwers", http.MethodPost, "/admin/orgs/members/remove",
 		url.Values{"slug": {"acme"}, "login": {"octocat"}}))
-	if got, _ := f.store.OrgsForUser(ctx, "gh:42"); len(got) != 0 {
+	if got, _ := f.store.NamespacesForUser(ctx, "gh:42"); got["acme"] != "" {
 		t.Errorf("member not removed: %v", got)
 	}
 

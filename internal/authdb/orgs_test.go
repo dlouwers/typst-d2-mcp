@@ -26,16 +26,16 @@ func TestOrg_CreateListDelete(t *testing.T) {
 	if orgs, _ := s.ListOrgs(ctx); len(orgs) != 0 {
 		t.Errorf("org survived deletion: %+v", orgs)
 	}
-	if err := s.DeleteOrg(ctx, "dlouwers", "ghost"); !errors.Is(err, ErrNoSuchOrg) {
-		t.Errorf("DeleteOrg(unknown) = %v, want ErrNoSuchOrg", err)
+	if err := s.DeleteOrg(ctx, "dlouwers", "ghost"); !errors.Is(err, ErrNoSuchNamespace) {
+		t.Errorf("DeleteOrg(unknown) = %v, want ErrNoSuchNamespace", err)
 	}
 }
 
 func TestOrg_CreateRejectsBadSlug(t *testing.T) {
 	s := newStore(t)
 	for _, slug := range []string{"", "a", "Acme", "ac me", "-acme", "acme-", "acme_co", "house", "preview"} {
-		if err := s.CreateOrg(t.Context(), "dlouwers", slug, ""); !errors.Is(err, ErrInvalidSlug) {
-			t.Errorf("CreateOrg(%q) = %v, want ErrInvalidSlug", slug, err)
+		if err := s.CreateOrg(t.Context(), "dlouwers", slug, ""); !errors.Is(err, ErrInvalidName) {
+			t.Errorf("CreateOrg(%q) = %v, want ErrInvalidName", slug, err)
 		}
 	}
 }
@@ -46,8 +46,8 @@ func TestOrg_CreateDuplicateSlug(t *testing.T) {
 	if err := s.CreateOrg(ctx, "dlouwers", "acme", ""); err != nil {
 		t.Fatalf("first CreateOrg: %v", err)
 	}
-	if err := s.CreateOrg(ctx, "dlouwers", "acme", "Other"); !errors.Is(err, ErrSlugTaken) {
-		t.Errorf("duplicate CreateOrg = %v, want ErrSlugTaken", err)
+	if err := s.CreateOrg(ctx, "dlouwers", "acme", "Other"); !errors.Is(err, ErrNameTaken) {
+		t.Errorf("duplicate CreateOrg = %v, want ErrNameTaken", err)
 	}
 }
 
@@ -81,8 +81,10 @@ func TestOrg_Membership(t *testing.T) {
 		t.Fatalf("unexpected members: %+v", members)
 	}
 
-	if orgs, _ := s.OrgsForUser(ctx, alice); len(orgs) != 1 || orgs[0] != "acme" {
-		t.Errorf("OrgsForUser(alice) = %v, want [acme]", orgs)
+	// Alice resolves acme AND her own personal namespace, which exists
+	// from her first sign-in.
+	if ns, _ := s.NamespacesForUser(ctx, alice); ns["acme"] == "" {
+		t.Errorf("NamespacesForUser(alice) = %v, want it to contain acme", ns)
 	}
 	if orgs, _ := s.ListOrgs(ctx); orgs[0].MemberCount != 2 {
 		t.Errorf("MemberCount = %d, want 2", orgs[0].MemberCount)
@@ -91,8 +93,8 @@ func TestOrg_Membership(t *testing.T) {
 	if err := s.RemoveOrgMember(ctx, "dlouwers", "acme", "alice"); err != nil {
 		t.Fatalf("RemoveOrgMember: %v", err)
 	}
-	if orgs, _ := s.OrgsForUser(ctx, alice); len(orgs) != 0 {
-		t.Errorf("alice still a member after removal: %v", orgs)
+	if ns, _ := s.NamespacesForUser(ctx, alice); ns["acme"] != "" {
+		t.Errorf("alice still resolves acme after removal: %v", ns)
 	}
 
 	// Deleting the org cascades to the remaining membership row.
@@ -116,7 +118,7 @@ func TestOrg_MembershipErrors(t *testing.T) {
 	}
 	// Unknown org.
 	seedUser(t, s, 1, "alice")
-	if err := s.AddOrgMember(ctx, "dlouwers", "nope", "alice"); !errors.Is(err, ErrNoSuchOrg) {
-		t.Errorf("AddOrgMember(unknown org) = %v, want ErrNoSuchOrg", err)
+	if err := s.AddOrgMember(ctx, "dlouwers", "nope", "alice"); !errors.Is(err, ErrNoSuchNamespace) {
+		t.Errorf("AddOrgMember(unknown org) = %v, want ErrNoSuchNamespace", err)
 	}
 }

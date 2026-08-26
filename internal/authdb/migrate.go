@@ -214,6 +214,71 @@ var migrations = []migration{
 			`CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id)`,
 		},
 	},
+	{
+		revision: 8,
+		name:     "namespaces addressed by id, named by reference",
+		stmts: []string{
+			// A namespace is the thing that OWNS templates. It has an id
+			// that never changes and never appears in an import.
+			//
+			// Revision 7 made the slug the primary key, which made the
+			// name the identity — so renaming meant moving content, and a
+			// personal namespace could only become a shared one by
+			// changing what kind of thing it was. That is GitHub's model,
+			// and GitHub's "convert your account to an organization" is a
+			// genuine migration precisely because of it.
+			//
+			// Here the name is a pointer. Growing a personal namespace
+			// into a shared one inserts rows; nothing moves.
+			`CREATE TABLE IF NOT EXISTS namespaces (
+  id         TEXT PRIMARY KEY,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by TEXT NOT NULL DEFAULT ''
+)`,
+			// Many names may point at one namespace, which is what makes
+			// a rename non-breaking: the old name keeps resolving, so
+			// documents that already import it never break. is_primary
+			// marks the one to show and to suggest.
+			`CREATE TABLE IF NOT EXISTS namespace_names (
+  name         TEXT PRIMARY KEY,
+  namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
+  is_primary   INTEGER NOT NULL DEFAULT 0,
+  display_name TEXT NOT NULL DEFAULT '',
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by   TEXT NOT NULL DEFAULT ''
+)`,
+			`CREATE INDEX IF NOT EXISTS idx_namespace_names_ns ON namespace_names(namespace_id)`,
+			// Membership carries a role, which settles "who may publish to
+			// a namespace" — the open question in #63. The creator of a
+			// personal namespace is its owner by construction.
+			`CREATE TABLE IF NOT EXISTS namespace_members (
+  namespace_id TEXT NOT NULL REFERENCES namespaces(id) ON DELETE CASCADE,
+  user_id      TEXT NOT NULL,
+  role         TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner','member')),
+  created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by   TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (namespace_id, user_id)
+)`,
+			`CREATE INDEX IF NOT EXISTS idx_namespace_members_user ON namespace_members(user_id)`,
+
+			// Carry revision 7 across. The old slug becomes both the id
+			// and the primary name, so any package directory already on
+			// the volume keeps resolving without being moved.
+			`INSERT OR IGNORE INTO namespaces (id, created_at, created_by)
+   SELECT slug, created_at, created_by FROM owners`,
+			`INSERT OR IGNORE INTO namespace_names (name, namespace_id, is_primary, display_name, created_at, created_by)
+   SELECT slug, slug, 1, display_name, created_at, created_by FROM owners`,
+			// Existing members carry over as members, not owners.
+			// Publishing did not exist under revision 7, so promoting
+			// everyone would hand out a power nobody had agreed to give.
+			// An admin can promote deliberately.
+			`INSERT OR IGNORE INTO namespace_members (namespace_id, user_id, role, created_at, created_by)
+   SELECT org_slug, user_id, 'member', created_at, created_by FROM org_members`,
+
+			`DROP TABLE IF EXISTS org_members`,
+			`DROP TABLE IF EXISTS owners`,
+		},
+	},
 }
 
 // latestRevision is the highest revision this binary knows how to apply.

@@ -90,16 +90,33 @@ export function seedQuota(login: string, quota: number | null): void {
   );
 }
 
-/** Number of organisation owners. */
+/**
+ * Number of shared namespaces — what the admin UI calls organisations.
+ *
+ * Personal namespaces are excluded the same way ListOrgs excludes them:
+ * everyone gets one at first sign-in, so counting them here would make
+ * this number depend on how many users happen to have signed in.
+ */
 export function orgCount(): number {
   return Number(
-    sql(`SELECT COUNT(*) FROM owners WHERE kind = 'org'`).trim(),
+    sql(
+      `SELECT COUNT(*) FROM namespace_names
+        WHERE is_primary = 1 AND name NOT LIKE 'gh-%'`,
+    ).trim(),
   );
 }
 
-/** Number of members in an organisation. */
+/**
+ * Number of members in a namespace, addressed by NAME. Membership hangs
+ * off the namespace id, so this joins through the name — which is the
+ * whole point of the indirection: a rename does not change the answer.
+ */
 export function orgMemberCount(slug: string): number {
   return Number(
-    sql(`SELECT COUNT(*) FROM org_members WHERE org_slug = '${slug}'`).trim(),
+    sql(
+      `SELECT COUNT(*) FROM namespace_members m
+         JOIN namespace_names nn ON nn.namespace_id = m.namespace_id
+        WHERE nn.name = '${slug}'`,
+    ).trim(),
   );
 }
