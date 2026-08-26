@@ -42,7 +42,7 @@ func TestWorkspaceInfo_ReportsCapabilities(t *testing.T) {
 
 	root := t.TempDir()
 	factory := workspace.TenantFactory{Root: root}
-	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "user123"})
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "gh:4242"})
 
 	info := wsInfo(t, ctx, factory)
 
@@ -87,10 +87,15 @@ func TestRenderEnvironment_HasProportionalSans(t *testing.T) {
 
 // A tenant's own typefaces have to reach the compiler, or an
 // organisation template cannot use the organisation's typeface.
-func TestTypstArgs_IncludesWorkspaceFontPath(t *testing.T) {
+//
+// They reach it through the package view, NOT as the tenant's own path:
+// a tenant root is <root>/gh:<id> and typst splits --font-path on ":",
+// so naming that path directly was silently discarded (#107).
+func TestTypstArgs_WorkspaceFontsReachTypstViaTheView(t *testing.T) {
 	root := t.TempDir()
-	tenant := filepath.Join(root, "user123")
-	if err := os.MkdirAll(tenant, 0o755); err != nil {
+	tenant := filepath.Join(root, "gh:4242")
+	fonts := filepath.Join(tenant, FontsDir)
+	if err := os.MkdirAll(fonts, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	r, err := workspace.NewScopedFS(tenant)
@@ -98,18 +103,19 @@ func TestTypstArgs_IncludesWorkspaceFontPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Absent is the normal case: no flag, no error.
-	if got := strings.Join(typstArgs(r, "in.typ", "out.pdf"), " "); strings.Contains(got, "--font-path") {
-		t.Errorf("font path passed for a workspace with no fonts dir: %s", got)
-	}
-
-	if err := os.MkdirAll(filepath.Join(tenant, FontsDir), 0o755); err != nil {
+	data := t.TempDir()
+	view, cleanup, err := packageView(data, map[string]string{}, workspaceFontPath(r))
+	if err != nil {
 		t.Fatal(err)
 	}
-	got := strings.Join(typstArgs(r, "in.typ", "out.pdf"), " ")
-	want := "--font-path " + filepath.Join(tenant, FontsDir)
-	if !strings.Contains(got, want) {
-		t.Errorf("args = %s, want it to contain %s", got, want)
+	defer cleanup()
+
+	got := strings.Join(typstArgs(r, "in.typ", "out.pdf", packageFontPath(view)), " ")
+	if !strings.Contains(got, "--font-path "+view) {
+		t.Errorf("args = %s, want the view passed as a font path", got)
+	}
+	if strings.Contains(got, tenant+"/"+FontsDir) {
+		t.Errorf("the tenant path was passed directly; typst would split it: %s", got)
 	}
 }
 
@@ -158,7 +164,7 @@ func TestCompile_WorkspaceFontIsUsable(t *testing.T) {
 	src := findSystemFont(t)
 	root := t.TempDir()
 	factory := workspace.TenantFactory{Root: root}
-	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "user123"})
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "gh:4242"})
 
 	raw, err := os.ReadFile(src)
 	if err != nil {
@@ -179,7 +185,7 @@ func TestCompile_WorkspaceFontIsUsable(t *testing.T) {
 		t.Fatalf("put_file font: %s", resultText(res))
 	}
 
-	resolver, err := factory.Resolver(identity.Identity{UserID: "user123"})
+	resolver, err := factory.Resolver(identity.Identity{UserID: "gh:4242"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,8 +230,30 @@ func TestCompile_WorkspaceFontIsUsable(t *testing.T) {
 // system and typst-embedded fonts excluded.
 func familiesFromPathOnly(t *testing.T, dir string) []string {
 	t.Helper()
+	// Copy to a colon-free directory first. This helper asks "what does
+	// this font file provide", and a tenant path contains a colon that
+	// typst would split — the very bug under test (#107). Probing
+	// through it would make this helper fail for reasons unrelated to
+	// what it is measuring.
+	clean := t.TempDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		raw, readErr := os.ReadFile(filepath.Join(dir, e.Name()))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if writeErr := os.WriteFile(filepath.Join(clean, e.Name()), raw, 0o644); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
 	out, err := exec.Command("typst", "fonts",
-		"--font-path", dir,
+		"--font-path", clean,
 		"--ignore-system-fonts",
 		"--ignore-embedded-fonts",
 	).Output()
@@ -258,7 +286,7 @@ func TestCompile_UnknownFontStillWarns(t *testing.T) {
 
 	root := t.TempDir()
 	factory := workspace.TenantFactory{Root: root}
-	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "user123"})
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "gh:4242"})
 
 	if res := putFile(t, ctx, factory, "doc.typ",
 		"#set text(font: \"No Such Family At All\")\n= Title\n"); res.IsError {
