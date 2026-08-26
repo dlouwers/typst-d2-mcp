@@ -23,11 +23,14 @@ spec:
       labels:
         app.kubernetes.io/name: typst-d2-mcp
     spec:
-      # GHCR package starts public; if you flip it private, seal a
-      # docker-registry secret and reference it here. See
+      # No imagePullSecrets: the GHCR package is public, so the kubelet
+      # pulls anonymously. Naming a Secret that does not exist does not
+      # fail the pull — it only makes the kubelet emit a
+      # FailedToRetrieveImagePullSecret warning on every pod creation,
+      # which is noise that looks like a broken deployment. If you flip
+      # the package to private, add the reference back — see
       # deploy/k8s/README.md → "GHCR pull secret (if private)".
-      imagePullSecrets:
-        - name: ghcr-pull
+
       # Match the binary's "nonroot" uid (65532) so the image runs as
       # a non-privileged user even before any container runtime
       # security profile kicks in. fsGroup ensures the mounted PVC is
