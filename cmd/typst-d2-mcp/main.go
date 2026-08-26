@@ -260,6 +260,15 @@ SYNTAX EXAMPLES:
       backend  -> database: Queries
     ]
 
+  Captioned (the common case) — inside #figure the call is in code
+  context, so it carries no hash:
+    #figure(
+      d2(layout: "elk", theme: "0")[
+        client -> server
+      ],
+      caption: [Request path.],
+    )
+
 VERIFYING THE RESULT:
   After a successful compile, open the produced PDF if you can. Check that
   text labels are readable and the diagram fits within page margins. If a
