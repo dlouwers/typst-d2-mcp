@@ -1173,8 +1173,28 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		// silent on success would mean a half-rendered PDF gets
 		// reported as a clean compile. We surface warnings to the
 		// caller so the LLM/operator can act on them.
+		// Rung 4 of #63: the typst child sees only the package
+		// namespaces this caller may import. Built as a symlink tree
+		// per compile rather than filtered at import time — a
+		// namespace that is not in the tree cannot be reached by any
+		// spelling of the import.
+		allowed, err := allowedNamespaces(ctx, store, id)
+		if err != nil {
+			metrics.CompileTotal.WithLabelValues(metrics.ResultFail).Inc()
+			log.Error("namespace resolution failed", "err", err)
+			return mcp.NewToolResultErrorFromErr("resolve template namespaces", err), nil
+		}
+		view, cleanupView, err := packageView(typstDataDir(), allowed)
+		if err != nil {
+			metrics.CompileTotal.WithLabelValues(metrics.ResultFail).Inc()
+			log.Error("package view failed", "err", err)
+			return mcp.NewToolResultErrorFromErr("prepare template namespaces", err), nil
+		}
+		defer cleanupView()
+
 		var stdoutBuf, stderrBuf bytes.Buffer
 		cmd := exec.CommandContext(ctx, "typst", typstArgs(resolver, tmpFile.Name(), resolvedOut)...)
+		cmd.Env = compileEnv(view)
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
 		err = cmd.Run()
