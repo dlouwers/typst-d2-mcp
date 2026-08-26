@@ -59,8 +59,6 @@ func TestListTemplates_MatchesWhatTheCallerCanCompile(t *testing.T) {
 	data := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", data)
 	writePackage(t, data, builtinNamespace, "0.1.0")
-	writePackage(t, data, "acme", "1.0.0")
-	writePackage(t, data, "globex", "2.0.0")
 
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -69,6 +67,8 @@ func TestListTemplates_MatchesWhatTheCallerCanCompile(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	writePackageForName(t, store, data, "acme", "1.0.0")
+	writePackageForName(t, store, data, "globex", "2.0.0")
 	member := seedUser(t, store, "member", 1)
 	if err := store.AddOrgMember(ctx, "admin", "acme", "member"); err != nil {
 		t.Fatal(err)
@@ -81,18 +81,25 @@ func TestListTemplates_MatchesWhatTheCallerCanCompile(t *testing.T) {
 	for _, e := range got.Templates {
 		namespaces = append(namespaces, e.Namespace)
 	}
-	if want := []string{"acme", builtinNamespace}; !equalStrings(namespaces, want) {
-		t.Errorf("listed %v, want %v — globex is not this caller's", namespaces, want)
+	for _, ns := range namespaces {
+		if ns == "globex" {
+			t.Errorf("listed globex, which is not this caller's: %v", namespaces)
+		}
+	}
+	if !containsString(namespaces, "acme") || !containsString(namespaces, builtinNamespace) {
+		t.Errorf("listed %v, want it to include acme and %s", namespaces, builtinNamespace)
 	}
 
-	// And it agrees with the resolver the compile uses, so the two
-	// cannot drift apart.
+	// Every listed namespace must be one the compile would resolve, so
+	// the listing and the package view cannot drift apart.
 	allowed, err := allowedNamespaces(memberCtx, store, member)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(namespaces, allowed) {
-		t.Errorf("listing %v disagrees with resolution %v", namespaces, allowed)
+	for _, ns := range namespaces {
+		if allowed[ns] == "" {
+			t.Errorf("listed %q, which the compile would not resolve (%v)", ns, allowed)
+		}
 	}
 }
 
@@ -101,12 +108,12 @@ func TestListTemplates_NonMemberSeesNoOrgTemplates(t *testing.T) {
 	data := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", data)
 	writePackage(t, data, builtinNamespace, "0.1.0")
-	writePackage(t, data, "acme", "1.0.0")
 
 	store := newTestStore(t)
 	if err := store.CreateOrg(context.Background(), "admin", "acme", "Acme"); err != nil {
 		t.Fatal(err)
 	}
+	writePackageForName(t, store, data, "acme", "1.0.0")
 	outsider := seedUser(t, store, "outsider", 7)
 
 	got := listTemplates(t, identity.WithIdentity(context.Background(), outsider), store)

@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 
@@ -75,6 +76,18 @@ RETURNING id;
 	var id int64
 	if err := s.db.QueryRowContext(ctx, stmt, githubID, login, email).Scan(&id); err != nil {
 		return 0, fmt.Errorf("upsert user: %w", err)
+	}
+	// Everyone always has a namespace, from the first sign-in, so there
+	// is never a moment where somebody has nowhere to put a template.
+	// Its name is derived from the GitHub numeric id — which survives a
+	// rename, unlike the login — and can be superseded later by a name
+	// they choose, without the namespace itself changing.
+	//
+	// A failure here must not block signing in: the namespace is
+	// provisioning, not authentication, and the next sign-in retries.
+	if _, err := s.EnsurePersonalNamespace(ctx, fmt.Sprintf("gh:%d", githubID), githubID); err != nil {
+		slog.WarnContext(ctx, "could not provision personal namespace",
+			"err", err, "github_id", githubID)
 	}
 	return id, nil
 }

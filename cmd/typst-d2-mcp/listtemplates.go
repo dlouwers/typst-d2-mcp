@@ -54,8 +54,11 @@ func handleListTemplates(store *authdb.Store) server.ToolHandlerFunc {
 		}
 
 		out := listTemplatesResult{Templates: []templateEntry{}}
-		for _, ns := range allowed {
-			out.Templates = append(out.Templates, templatesInNamespace(typstDataDir(), ns)...)
+		for _, name := range sortedNames(allowed) {
+			// Listed under the NAME, which is what goes in the import;
+			// read from the id, which is where the packages live.
+			out.Templates = append(out.Templates,
+				templatesInNamespace(typstDataDir(), name, allowed[name])...)
 		}
 		if len(out.Templates) == 0 {
 			out.Note = "No templates are installed for you. Style the document yourself, " +
@@ -73,8 +76,8 @@ func handleListTemplates(store *authdb.Store) server.ToolHandlerFunc {
 // templatesInNamespace lists the packages published under one owner.
 // A namespace with nothing in it yields nothing rather than an error:
 // an organisation exists in the schema before anyone publishes to it.
-func templatesInNamespace(dataDir, namespace string) []templateEntry {
-	nsRoot := filepath.Join(dataDir, "typst", "packages", namespace)
+func templatesInNamespace(dataDir, name, namespaceID string) []templateEntry {
+	nsRoot := filepath.Join(dataDir, "typst", "packages", namespaceID)
 	pkgs, err := os.ReadDir(nsRoot)
 	if err != nil {
 		return nil
@@ -93,11 +96,11 @@ func templatesInNamespace(dataDir, namespace string) []templateEntry {
 				continue
 			}
 			entry := templateEntry{
-				Namespace: namespace,
+				Namespace: name,
 				Name:      pkg.Name(),
 				Version:   v.Name(),
-				Import:    fmt.Sprintf("@%s/%s:%s", namespace, pkg.Name(), v.Name()),
-				Builtin:   namespace == builtinNamespace,
+				Import:    fmt.Sprintf("@%s/%s:%s", name, pkg.Name(), v.Name()),
+				Builtin:   name == builtinNamespace,
 				Exports: exportedNames(filepath.Join(
 					nsRoot, pkg.Name(), v.Name(), "lib.typ")),
 			}
