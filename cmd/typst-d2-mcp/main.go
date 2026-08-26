@@ -271,6 +271,13 @@ WORKSPACE, FILES & LIMITS (put_file / workspace_info):
   remaining slice with mode "append". Each slice must be within the
   per-call limit; the slices concatenate verbatim on disk.
 
+  FONTS: the render environment has a small fixed set of families, and
+  typst SUBSTITUTES an unknown one silently while still exiting 0 — the
+  PDF looks fine and is wrong. Check workspace_info.font_families before
+  setting a font. To use your own typefaces, put_file the .ttf/.otf into
+  the workspace "fonts/" directory; they are visible only to your
+  workspace and are not aged out.
+
   A hosted workspace may also have a cumulative byte budget across all
   its files. Call workspace_info first — it returns per_call_limit_bytes,
   used_bytes, and (when a budget is set) budget_bytes / available_bytes —
@@ -1024,6 +1031,14 @@ No arguments; returns JSON:
   - budget_bytes / available_bytes (+ *_human): the cumulative cap and
     remaining space, present only when a budget is configured (absent =
     no cap). A put_file over available_bytes is rejected.
+  - typst_version / d2_version: the binaries this server actually runs.
+  - font_families: every font family a compile can resolve, including
+    any you have pushed. Typst SUBSTITUTES an unknown family silently
+    and still exits 0, so a document naming one produces a PDF that
+    looks fine and is wrong — check this list before setting a font.
+  - fonts_dir: push .ttf/.otf files here (via put_file) to use your own
+    typefaces; they are visible only to your workspace. Present only
+    where the workspace is bounded.
 
 See the server instructions for the full file / upload guide.`),
 	)
@@ -1267,10 +1282,18 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 // tenant's own directory. An unbounded resolver (stdio mode, where the
 // "workspace" is the user's filesystem) gets no --root, leaving typst's
 // default of the input file's own directory.
+//
+// A workspace fonts/ directory, if present, is added as a font path so
+// a tenant can set documents in its own typefaces. The path is inside
+// the tenant's own root, so one workspace's fonts are not visible to
+// another.
 func typstArgs(r workspace.Resolver, in, out string) []string {
 	args := []string{"compile"}
 	if b, ok := r.(workspace.Bounded); ok {
 		args = append(args, "--root", b.WorkspaceRoot())
+	}
+	if fonts := workspaceFontPath(r); fonts != "" {
+		args = append(args, "--font-path", fonts)
 	}
 	return append(args, in, out)
 }
@@ -1474,6 +1497,16 @@ type workspaceInfo struct {
 	BudgetHuman       string `json:"budget_human,omitempty"`
 	AvailableBytes    *int64 `json:"available_bytes,omitempty"`
 	AvailableHuman    string `json:"available_human,omitempty"`
+
+	// What this environment can actually do, as opposed to how much of
+	// it is left. A caller had no way to learn any of this short of
+	// spending a compile on a probe document — and typst substitutes a
+	// missing font silently, so the probe was the only way to find out
+	// at all.
+	TypstVersion string   `json:"typst_version,omitempty"`
+	D2Version    string   `json:"d2_version,omitempty"`
+	FontFamilies []string `json:"font_families,omitempty"`
+	FontsDir     string   `json:"fonts_dir,omitempty"`
 }
 
 func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.ToolHandlerFunc {
@@ -1487,10 +1520,17 @@ func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("measure workspace", err), nil
 		}
+		typstVersion, d2Version := toolVersions()
 		info := workspaceInfo{
 			PerCallLimitBytes: limit,
 			PerCallLimitHuman: humanBytes(limit),
 			UsageTracked:      tracked,
+			TypstVersion:      typstVersion,
+			D2Version:         d2Version,
+			FontFamilies:      fontFamilies(workspaceFontPath(resolver)),
+		}
+		if _, ok := resolver.(workspace.Bounded); ok {
+			info.FontsDir = FontsDir
 		}
 		if tracked {
 			u := used

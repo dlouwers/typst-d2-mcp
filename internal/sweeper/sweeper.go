@@ -5,9 +5,13 @@
 // Workspaces are treated as scratch space. Everything in them is
 // reproducible — the source can be re-uploaded and recompiled — so files
 // are purged on age alone, with no distinction between put_file uploads
-// and generated PDFs. The one exception is a file with an unexpired
-// download link pointing at it: those are kept however old they are, so
-// a URL already in someone's hands never breaks.
+// and generated PDFs. There are two exceptions: a file with an unexpired
+// download link pointing at it, kept however old it is so a URL already
+// in someone's hands never breaks; and the workspace's fonts/ directory,
+// which is configuration rather than scratch. A tenant's typefaces are
+// pushed once and referenced by every document afterwards, so ageing
+// them out would break a workspace's typography at a distance, long
+// after the last put_file and with nothing to connect cause to effect.
 //
 // The same pass records each user's total workspace size. The walk is
 // already happening, and caching the result means the admin UI never
@@ -22,6 +26,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -192,6 +197,11 @@ func (s *Sweeper) sweepUser(ctx context.Context, userID string, protected map[st
 		}
 		rel = filepath.Clean(rel)
 
+		if isConfig(rel) {
+			totalBytes += info.Size()
+			return nil
+		}
+
 		if s.cfg.FileTTL > 0 && info.ModTime().Before(cutoff) && !protected[rel] {
 			size := info.Size()
 			if err := os.Remove(path); err != nil {
@@ -221,6 +231,23 @@ func (s *Sweeper) sweepUser(ctx context.Context, userID string, protected map[st
 		return res, fmt.Errorf("record usage: %w", err)
 	}
 	return res, nil
+}
+
+// configDirs are workspace subdirectories the sweeper never purges.
+// They hold things a tenant sets up once and expects to stay set up,
+// as opposed to the documents and PDFs that make up the scratch space
+// around them.
+var configDirs = []string{"fonts"}
+
+// isConfig reports whether a workspace-relative path lives under one of
+// the configuration directories.
+func isConfig(rel string) bool {
+	for _, dir := range configDirs {
+		if rel == dir || strings.HasPrefix(rel, dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // pruneEmptyDirs removes directories left empty by the purge, deepest
