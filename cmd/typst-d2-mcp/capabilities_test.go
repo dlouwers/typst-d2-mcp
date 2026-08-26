@@ -273,27 +273,47 @@ func TestCompile_UnknownFontStillWarns(t *testing.T) {
 	}
 }
 
-// findSystemFont picks any font file on the host to stand in for a
+// findSystemFont picks a font file on the host to stand in for a
 // tenant's own face.
+//
+// It has to fit through put_file, which caps one call at
+// maxInputBytes. Taking the first font found is not enough: a CJK or
+// emoji face runs to several megabytes and the test then fails on the
+// upload rather than on anything it is trying to prove. Pick the
+// smallest candidate under the limit.
 func findSystemFont(t *testing.T) string {
 	t.Helper()
+	limit := maxInputBytes()
 	roots := []string{"/usr/share/fonts", "/usr/local/share/fonts"}
-	var found string
+
+	var best string
+	var bestSize int64
 	for _, root := range roots {
 		_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-			if err != nil || found != "" || info == nil || info.IsDir() {
+			if err != nil || info == nil || info.IsDir() {
 				return nil //nolint:nilerr // an unreadable font dir just means "look elsewhere"
 			}
 			switch strings.ToLower(filepath.Ext(path)) {
 			case ".ttf", ".otf":
-				found = path
+			default:
+				return nil
+			}
+			// Walk reports symlinks with Lstat, so a link to a 6MB face
+			// looks tiny and then fails the upload. Only regular files.
+			if !info.Mode().IsRegular() {
+				return nil
+			}
+			if info.Size() > limit {
+				return nil
+			}
+			if best == "" || info.Size() < bestSize {
+				best, bestSize = path, info.Size()
 			}
 			return nil
 		})
-		if found != "" {
-			return found
-		}
 	}
-	t.Skip("no system font file to use as a stand-in")
-	return ""
+	if best == "" {
+		t.Skipf("no system font under %d bytes to use as a stand-in", limit)
+	}
+	return best
 }

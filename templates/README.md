@@ -60,6 +60,25 @@ Export a function from `lib.typ`. This is the path for a type that
 should exist for everyone, on every deployment: it ships in the binary,
 is covered by the tests below, and seeds onto every volume.
 
+### By publishing (anyone, into a namespace they own)
+
+`publish_template` takes a workspace directory holding `typst.toml` and
+the entrypoint and installs it as `@<namespace>/<name>:<version>`.
+Everyone has their own namespace, so this needs nothing granted.
+
+Two rules do the work:
+
+- **It must compile before it is accepted.** The package is staged and a
+  document is compiled against it, and every export whose last parameter
+  is a positional `body` — the shape `#show:` supplies — is also applied
+  with default arguments. That second part is not optional: typst
+  evaluates lazily, so a template referencing a logo it forgot to ship
+  imports cleanly and only fails when somebody calls it. Which is to
+  say, it fails for everyone except the person who published it.
+- **A published version is immutable.** Documents pin what they import,
+  so replacing `1.0.0` would change how already-written documents
+  render. Publish `1.0.1`; the old version keeps working.
+
 ### On the data volume (operator, immediate)
 
 Because seeding never overwrites, anything already at
