@@ -2,6 +2,12 @@
 # Only what no trustworthy devcontainer feature provides.
 set -euo pipefail
 
+# Paths are derived from this script's own location rather than assuming the
+# working directory. The mount point is named after the folder devcontainer
+# was pointed at, so a git worktree lands somewhere else entirely and a
+# cwd-relative path silently provisions nothing.
+REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+
 # One of the feature installs leaves /tmp as root:root 0755 instead of
 # the standard sticky 1777. That breaks more than it looks: `go build`
 # creates its work directory under /tmp, so without this the container
@@ -47,6 +53,33 @@ echo "==> bun"
 curl -fsSL https://bun.sh/install | bash > /dev/null
 sudo ln -sf "$HOME/.bun/bin/bun" /usr/local/bin/bun
 sudo ln -sf "$HOME/.bun/bin/bunx" /usr/local/bin/bunx
+
+# Node, because bun alone cannot run Playwright: its CLI is a Node script
+# and its workers fork node processes. The host's no-system-Node rule is
+# about the host; inside a container it coexists with everything else.
+echo "==> node"
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - > /dev/null
+sudo apt-get install -y -qq --no-install-recommends nodejs
+
+# Playwright's browser and the apt packages it needs. Without this the suite
+# cannot run in here at all, and the only way to run it locally is to install
+# Chromium on the host — which is both toolchain pollution and, on a non-
+# Debian host, an install that fails outright: `--with-deps` shells out to
+# apt-get. It also turns out that Playwright's downloader can hang
+# indefinitely on some networks where the same archive fetches at 40MB/s with
+# curl, so "just install it on the host" is not the cheap fallback it looks
+# like.
+#
+# Chromium only. Firefox and WebKit would multiply the image for no value
+# here: the suite targets one browser.
+#
+# Run from playwright/ so the pinned @playwright/test version decides which
+# browser build to fetch — each version pins one, and a mismatched build is
+# a launch failure rather than a download.
+echo "==> playwright browsers"
+if [ -f "$REPO_ROOT/playwright/package.json" ]; then
+  (cd "$REPO_ROOT/playwright" && bun install --frozen-lockfile && bunx playwright install --with-deps chromium)
+fi
 
 # Both local and CI are on golangci-lint v2 now, driven by .golangci.yml,
 # so `latest` matches what CI resolves rather than drifting from it.
