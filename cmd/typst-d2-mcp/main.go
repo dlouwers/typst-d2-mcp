@@ -375,12 +375,18 @@ func templateInstructions() string {
 	if _, err := os.Stat(pkg); err != nil {
 		return ""
 	}
-	return fmt.Sprintf(`HOUSE TEMPLATES — READ THIS FIRST:
+	return fmt.Sprintf(`TEMPLATES — READ THIS FIRST:
   This server ships document templates. Prefer them over styling a
   document yourself — they exist so that documents from different
   people, written at different times, come out looking the same.
   Reach for one whenever you are asked for a report, a memo, or a
   decision record, before writing any #set or #show rules of your own.
+
+  CALL list_templates FIRST. Which templates you can import depends on
+  who you are — the house ones below are available to everyone, and an
+  organisation you belong to may publish its own. list_templates
+  returns the exact import string and what each package exports; this
+  section can only describe the built-in ones.
 
     #import "@%[1]s/%[2]s:%[3]s": report, adr
 
@@ -443,17 +449,21 @@ func templateNudge(src string) string {
 	if templateInstructions() == "" {
 		return "" // no package installed; nothing to point at
 	}
-	importPath := fmt.Sprintf("@%s/%s:%s", templateNamespace, templateName, templateVersion)
-	if strings.Contains(src, importPath) {
+	// Any template import counts as "has seen the templates", not just
+	// the built-in one: since #63 rung 4 a caller may be styling with
+	// their own organisation's package, and nagging them about the
+	// house style would be both wrong and unactionable.
+	if strings.Contains(src, `#import "@`) {
 		return ""
 	}
+	importPath := fmt.Sprintf("@%s/%s:%s", templateNamespace, templateName, templateVersion)
 	for _, marker := range selfStyling {
 		if strings.Contains(src, marker) {
 			return fmt.Sprintf(
 				"NOTE: this document sets its own page/text/heading rules and imports no "+
-					"template. House templates are available and are what keeps documents "+
+					"template. Templates are available and are what keeps documents "+
 					"consistent:\n  #import \"%s\": report, adr\n"+
-					"See the server instructions for their arguments.", importPath)
+					"Call list_templates to see everything you can import.", importPath)
 		}
 	}
 	return ""
@@ -1043,6 +1053,33 @@ No arguments; returns JSON:
 See the server instructions for the full file / upload guide.`),
 	)
 	s.AddTool(workspaceInfoTool, handleWorkspaceInfo(factory, store))
+
+	// Discovery has to be a tool rather than a line of instructions:
+	// since #63 rung 4 a compile resolves only the caller's own
+	// namespaces, so the answer differs per caller and no fixed string
+	// can carry it.
+	listTemplatesTool := mcp.NewTool("list_templates",
+		mcp.WithDescription(`List the document templates you can import, for this caller.
+
+PREFER A TEMPLATE over styling a document yourself — they exist so that
+documents from different people, written at different times, come out
+looking the same. Call this before writing any #set or #show rules.
+
+No arguments; returns JSON:
+  - templates[]: namespace, name, version, and the exact "import" string
+    to use, plus "exports" — the functions that package offers.
+  - builtin: true for the server's house templates, available to
+    everyone. Others come from organisations you belong to.
+  - note: present only when nothing is available to you.
+
+Use it like:
+  #import "<the import string>": <an export>
+  #show: report.with(title: "...")
+
+An empty list means no template is installed for you — style the
+document yourself, or ask an administrator to publish one.`),
+	)
+	s.AddTool(listTemplatesTool, handleListTemplates(store))
 }
 
 func registerResources(s *server.MCPServer, factory workspace.Factory) {
@@ -1193,7 +1230,8 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		defer cleanupView()
 
 		var stdoutBuf, stderrBuf bytes.Buffer
-		cmd := exec.CommandContext(ctx, "typst", typstArgs(resolver, tmpFile.Name(), resolvedOut)...)
+		cmd := exec.CommandContext(ctx, "typst",
+			typstArgs(resolver, tmpFile.Name(), resolvedOut, packageFontPath(view))...)
 		cmd.Env = compileEnv(view)
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
@@ -1307,13 +1345,22 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 // a tenant can set documents in its own typefaces. The path is inside
 // the tenant's own root, so one workspace's fonts are not visible to
 // another.
-func typstArgs(r workspace.Resolver, in, out string) []string {
+//
+// extraFontPaths carries font directories the caller has already
+// resolved — today the package view, so a template can ship the
+// typeface it is designed in. Empty strings are ignored.
+func typstArgs(r workspace.Resolver, in, out string, extraFontPaths ...string) []string {
 	args := []string{"compile"}
 	if b, ok := r.(workspace.Bounded); ok {
 		args = append(args, "--root", b.WorkspaceRoot())
 	}
 	if fonts := workspaceFontPath(r); fonts != "" {
 		args = append(args, "--font-path", fonts)
+	}
+	for _, p := range extraFontPaths {
+		if p != "" {
+			args = append(args, "--font-path", p)
+		}
 	}
 	return append(args, in, out)
 }

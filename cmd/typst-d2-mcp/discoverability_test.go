@@ -31,9 +31,9 @@ func TestInstructions_TemplatesComeFirst(t *testing.T) {
 
 	full := templateInstructions() + serverInstructions
 
-	tmplAt := strings.Index(full, "HOUSE TEMPLATES")
+	tmplAt := strings.Index(full, "TEMPLATES — READ THIS FIRST")
 	if tmplAt < 0 {
-		t.Fatal("HOUSE TEMPLATES section missing from the instructions")
+		t.Fatal("templates section missing from the instructions")
 	}
 	if tmplAt != 0 {
 		t.Errorf("HOUSE TEMPLATES starts at byte %d, want the very front", tmplAt)
@@ -51,7 +51,10 @@ func TestInstructions_TemplatesComeFirst(t *testing.T) {
 	if len(head) > cap {
 		head = head[:cap]
 	}
-	for _, want := range []string{"@house/templates:0.1.0", "report", "adr"} {
+	// The import line, both built-in names, and the pointer to
+	// list_templates — which is the only way a caller learns about an
+	// organisation's own templates — must all survive a cap.
+	for _, want := range []string{"@house/templates:0.1.0", "report", "adr", "list_templates"} {
 		if !strings.Contains(head, want) {
 			t.Errorf("%q does not survive a %d-byte instructions cap", want, cap)
 		}

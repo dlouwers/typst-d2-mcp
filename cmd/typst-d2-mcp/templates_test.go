@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -142,16 +143,38 @@ func TestSeedBundledTemplates(t *testing.T) {
 		}
 	}
 
-	// The seeded content must match the repo source of truth byte-for-byte.
-	for _, f := range []string{"typst.toml", "lib.typ"} {
-		got, _ := os.ReadFile(filepath.Join(pkg, f))
-		want, err := os.ReadFile(filepath.Join(repoTemplates(t), templateNamespace, templateName, templateVersion, f))
-		if err != nil {
-			t.Fatalf("read repo %s: %v", f, err)
+	// The seeded tree must match the repo source of truth in full, not
+	// at two named files. A template is a typst package and may ship an
+	// assets/ directory, a mark, a _helpers.typ — and a seed that
+	// carried only the files a test happened to name would leave the
+	// volume quietly incomplete, surfacing as a user's compile failing
+	// on a file that is present in the repo.
+	repoRoot := filepath.Join(repoTemplates(t), templateNamespace)
+	seededRoot := filepath.Join(data, "typst", "packages", templateNamespace)
+	err := filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		want, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		got, gotErr := os.ReadFile(filepath.Join(seededRoot, rel))
+		if gotErr != nil {
+			t.Errorf("seed did not write %s: %v", rel, gotErr)
+			return nil
 		}
 		if string(got) != string(want) {
-			t.Errorf("seeded %s differs from the repo source", f)
+			t.Errorf("seeded %s differs from the repo source", rel)
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk repo templates: %v", err)
 	}
 
 	// Non-destructive: an operator edit on the volume survives a re-seed.
