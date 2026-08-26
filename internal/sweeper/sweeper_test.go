@@ -305,3 +305,41 @@ func TestSweepOnce_MissingRootIsNotAnError(t *testing.T) {
 		t.Errorf("SweepOnce with missing root: %v", err)
 	}
 }
+
+// A tenant's typefaces are pushed once and referenced by every document
+// afterwards. Ageing them out would break a workspace's typography long
+// after the last put_file, with nothing connecting cause to effect — so
+// fonts/ is configuration, not scratch, and survives whatever its age.
+func TestSweepOnce_KeepsWorkspaceFonts(t *testing.T) {
+	store := newStore(t)
+	root := t.TempDir()
+
+	font := writeFile(t, root, "gh:1", filepath.Join("fonts", "Brand-Regular.ttf"), 30*24*time.Hour)
+	nested := writeFile(t, root, "gh:1", filepath.Join("fonts", "brand", "Brand-Bold.otf"), 30*24*time.Hour)
+	doc := writeFile(t, root, "gh:1", "old.pdf", 48*time.Hour)
+
+	// A file merely NAMED like the directory is still scratch.
+	decoy := writeFile(t, root, "gh:1", "fonts-notes.txt", 48*time.Hour)
+
+	sw := New(store, Config{Root: root, FileTTL: 24 * time.Hour, Interval: time.Hour})
+	res, err := sw.SweepOnce(t.Context(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+
+	if !exists(t, font) {
+		t.Error("a workspace font was purged")
+	}
+	if !exists(t, nested) {
+		t.Error("a font in a fonts/ subdirectory was purged")
+	}
+	if exists(t, doc) {
+		t.Error("an aged-out PDF survived; the exemption is too broad")
+	}
+	if exists(t, decoy) {
+		t.Error("a file merely prefixed 'fonts' was treated as configuration")
+	}
+	if res.FilesDeleted != 2 {
+		t.Errorf("FilesDeleted = %d, want 2", res.FilesDeleted)
+	}
+}
