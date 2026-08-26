@@ -86,6 +86,33 @@ Four things to know before using it:
   come back here as a change to `lib.typ`, or the next volume will not
   have it.
 
+### What a template may ship
+
+A template is a typst package, so it is not limited to `lib.typ`. Paths
+inside the package resolve against the package root, which holds under
+both the compile's `--root` and the per-caller symlink view:
+
+```
+house/templates/0.1.0/
+  typst.toml
+  lib.typ            #image("assets/logo.svg")  ✓
+  assets/logo.svg    a mark, a background, any figure
+  fonts/Brand.ttf    the typeface the template is designed in
+  _helpers.typ       internals, by the same convention as _page-setup
+```
+
+Fonts anywhere under a package are found because the package view is
+passed to typst as a font path, so a template's typeface travels with
+it and is visible only to callers who can see the template.
+
+Two things to keep in mind. Everything under `templates/` here is
+embedded in the **binary** and lands in every image layer, so a
+print-resolution logo is a poor idea — there is a size ceiling in
+`embed_test.go`. And the embed uses `//go:embed all:house` precisely so
+that `_`- and `.`-prefixed entries are not silently dropped; a bare
+`//go:embed` skips them, which would build cleanly and fail at a user's
+compile.
+
 ### Either way
 
 Two shapes exist deliberately:

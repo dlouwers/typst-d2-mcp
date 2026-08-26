@@ -114,3 +114,21 @@ func compileEnv(view string) []string {
 	}
 	return append(out, "XDG_DATA_HOME="+view)
 }
+
+// packageFontPath returns the font search path for a package view.
+//
+// A template is designed in a typeface, and a template that cannot use
+// its own is the same half-measure as one that cannot use its own logo:
+// typst substitutes silently, so the document renders and is wrong.
+// Fonts a template ships therefore travel with it.
+//
+// typst searches a --font-path recursively, so pointing at the packages
+// root covers every namespace in the view — and only those, since the
+// view is already the caller's permitted set. The font boundary is the
+// template boundary, for free.
+func packageFontPath(view string) string {
+	if view == "" {
+		return ""
+	}
+	return filepath.Join(view, "typst", "packages")
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // writePackage puts a minimal typst package into a store, exporting a
@@ -255,4 +256,176 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// writePackageWithAsset builds a template package that ships a logo and
+// references it from lib.typ by a path relative to the package root.
+func writePackageWithAsset(t *testing.T, dataDir, namespace, version string) {
+	t.Helper()
+	dir := filepath.Join(dataDir, "typst", "packages", namespace, "templates", version)
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"typst.toml": "[package]\nname = \"templates\"\nversion = \"" + version +
+			"\"\nentrypoint = \"lib.typ\"\n",
+		"assets/logo.svg": `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">` +
+			`<rect width="20" height="20" fill="#006566"/></svg>`,
+		"lib.typ": "#let branded(body) = {\n  image(\"assets/logo.svg\", width: 10mm)\n  body\n}\n",
+	}
+	for rel, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A branded template needs its mark, so a template package must be able
+// to read files it ships. Two things could have broken that and neither
+// is obvious: the compile passes --root at the workspace (#91), and the
+// package reaches typst through a symlinked view (#63 rung 4). Neither
+// does — typst treats the package directory as its own root — but that
+// is worth a test rather than an assumption, because the failure would
+// only appear once someone shipped a template with a logo.
+func TestCompile_TemplateAssetResolves(t *testing.T) {
+	requireTypst(t)
+
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	writePackageWithAsset(t, data, builtinNamespace, "9.9.9")
+
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "user123"})
+
+	src := "#import \"@" + builtinNamespace + "/templates:9.9.9\": branded\n" +
+		"#show: branded\n= Title\nBody.\n"
+	if res := putFile(t, ctx, factory, "doc.typ", src); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+
+	res := compile(t, ctx, factory, "doc.typ")
+	if res.IsError {
+		t.Fatalf("a template could not read its own bundled asset: %s", resultText(res))
+	}
+	assertPDF(t, filepath.Join(root, "user123", "doc.pdf"))
+}
+
+// The same, for a template reached through organisation membership
+// rather than the built-in namespace — the asset must survive the
+// symlink hop too.
+func TestCompile_OrgTemplateAssetResolves(t *testing.T) {
+	requireTypst(t)
+
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	writePackageWithAsset(t, data, "acme", "1.0.0")
+
+	store := newTestStore(t)
+	if err := store.CreateOrg(t.Context(), "admin", "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	member := seedUser(t, store, "member", 1)
+	if err := store.AddOrgMember(t.Context(), "admin", "acme", "member"); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), member)
+
+	src := "#import \"@acme/templates:1.0.0\": branded\n#show: branded\n= Title\n"
+	if res := putFileStore(t, ctx, factory, store, "doc.typ", src); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "compile_typst_with_d2"
+	req.Params.Arguments = map[string]any{"file_path": "doc.typ"}
+	res, err := handleCompileTypst(factory, store)(ctx, req)
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("an org template could not read its own asset: %s", resultText(res))
+	}
+	assertPDF(t, filepath.Join(root, member.UserID, "doc.pdf"))
+}
+
+// The package view is a font path, so a template can ship the typeface
+// it is designed in. Unit-level, so it runs everywhere.
+func TestTypstArgs_PackageViewIsAFontPath(t *testing.T) {
+	root := t.TempDir()
+	r, err := workspace.NewScopedFS(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(typstArgs(r, "in.typ", "out.pdf", packageFontPath("/the/view")), " ")
+	if want := "--font-path " + filepath.Join("/the/view", "typst", "packages"); !strings.Contains(got, want) {
+		t.Errorf("args = %s, want it to contain %s", got, want)
+	}
+
+	// An empty extra path must not produce a bare --font-path.
+	got = strings.Join(typstArgs(r, "in.typ", "out.pdf", ""), " ")
+	if strings.Contains(got, "--font-path ") && strings.Contains(got, "--font-path  ") {
+		t.Errorf("empty font path leaked into args: %s", got)
+	}
+}
+
+func TestPackageFontPath_EmptyViewIsEmpty(t *testing.T) {
+	if got := packageFontPath(""); got != "" {
+		t.Errorf("packageFontPath(\"\") = %q, want empty", got)
+	}
+}
+
+// End to end: a font shipped inside a template package is resolvable
+// when compiling against that template, and typst does not fall back.
+func TestCompile_TemplateFontResolves(t *testing.T) {
+	requireTypst(t)
+	src := findSystemFont(t) // skips when the host has no fonts
+
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	pkg := filepath.Join(data, "typst", "packages", builtinNamespace, "templates", "9.9.9")
+	if err := os.MkdirAll(filepath.Join(pkg, "fonts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "fonts", filepath.Base(src)), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Which family does that file provide, ignoring everything else?
+	families := familiesFromPathOnly(t, filepath.Join(pkg, "fonts"))
+	if len(families) == 0 {
+		t.Skip("could not determine the family of the stand-in font")
+	}
+
+	toml := "[package]\nname = \"templates\"\nversion = \"9.9.9\"\nentrypoint = \"lib.typ\"\n"
+	if err := os.WriteFile(filepath.Join(pkg, "typst.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := "#let branded(body) = {\n  set text(font: \"" + families[0] + "\")\n  body\n}\n"
+	if err := os.WriteFile(filepath.Join(pkg, "lib.typ"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "user123"})
+
+	doc := "#import \"@" + builtinNamespace + "/templates:9.9.9\": branded\n#show: branded\n= Title\n"
+	if res := putFile(t, ctx, factory, "doc.typ", doc); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	res := compile(t, ctx, factory, "doc.typ")
+	if res.IsError {
+		t.Fatalf("compile failed: %s", resultText(res))
+	}
+	if got := resultText(res); strings.Contains(strings.ToLower(got), "unknown font family") {
+		t.Errorf("a font shipped with the template was not resolved:\n%s", got)
+	}
 }
