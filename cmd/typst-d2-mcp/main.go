@@ -951,7 +951,14 @@ PRINT-FRIENDLY DEFAULTS:
 
 After compiling, inspect the PDF if you can; if a diagram looks cramped,
 add 'direction: down', split it, or simplify it. If you cannot view the
-PDF yourself, tell the user to check the layout.`
+PDF yourself, tell the user to check the layout.
+
+A relative path in the document — #image("logo.svg"), #read("data.csv"),
+#import "style.typ" — resolves against the directory of the .typ file
+being compiled, so an asset pushed with put_file next to the document is
+referenced by its plain name. In scoped/hosted mode a leading slash
+addresses the workspace root ("/assets/logo.svg"), and typst cannot read
+outside the workspace.`
 }
 
 func registerTools(s *server.MCPServer, factory workspace.Factory, store *authdb.Store) {
@@ -979,8 +986,12 @@ may also have a cumulative byte budget — call workspace_info to check the
 limit and remaining space before a large push.
 
 Paths are workspace-relative in scoped/hosted mode (traversal rejected),
-any path in local mode. See the server instructions for the full file /
-upload guide.`,
+any path in local mode.
+
+A file pushed here IS referenceable from a document you then compile:
+put an asset beside the .typ that uses it and name it relatively —
+put_file "logo.svg" then #image("logo.svg"). See the server instructions
+for the full file / upload guide.`,
 			inputLimit, humanBytes(inputLimit))),
 		mcp.WithString("path",
 			mcp.Required(),
@@ -1110,7 +1121,19 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 			return mcp.NewToolResultErrorFromErr("Preprocessing failed", err), nil
 		}
 
-		tmpFile, err := os.CreateTemp("", "typst-d2-*.typ")
+		// Stage the preprocessed source NEXT TO the input rather than in
+		// /tmp. typst resolves a document's relative paths against the
+		// directory of the file it is handed, so staging in /tmp made
+		// every asset pushed with put_file unreachable: put_file
+		// reported success, and the failure surfaced later as
+		// "file not found (searched at /tmp/logo.svg)", which reads
+		// like a document bug rather than a server one.
+		//
+		// The staged file is removed on the way out, and the workspace
+		// sweeper would collect it anyway if a crash left one behind.
+		// workspace.DirBytes skips the prefix so a compile in flight
+		// does not inflate reported usage or eat into a byte budget.
+		tmpFile, err := os.CreateTemp(filepath.Dir(resolvedIn), workspace.StagePrefix+"*.typ")
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("Failed to create temp file", err), nil
 		}
@@ -1136,7 +1159,7 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		// reported as a clean compile. We surface warnings to the
 		// caller so the LLM/operator can act on them.
 		var stdoutBuf, stderrBuf bytes.Buffer
-		cmd := exec.CommandContext(ctx, "typst", "compile", tmpFile.Name(), resolvedOut)
+		cmd := exec.CommandContext(ctx, "typst", typstArgs(resolver, tmpFile.Name(), resolvedOut)...)
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
 		err = cmd.Run()
@@ -1236,6 +1259,22 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 // factory, and streams the PDF bytes. There is intentionally no
 // Bearer/auth check: the random token IS the credential, by design
 // (RFC-7239 §1 capability URL pattern).
+// typstArgs builds the typst invocation for a staged source file.
+//
+// A bounded workspace becomes typst's root, which does two things: it
+// lets a document address an asset from the workspace root ("/logo.svg")
+// as well as relatively, and it stops typst reading anything outside the
+// tenant's own directory. An unbounded resolver (stdio mode, where the
+// "workspace" is the user's filesystem) gets no --root, leaving typst's
+// default of the input file's own directory.
+func typstArgs(r workspace.Resolver, in, out string) []string {
+	args := []string{"compile"}
+	if b, ok := r.(workspace.Bounded); ok {
+		args = append(args, "--root", b.WorkspaceRoot())
+	}
+	return append(args, in, out)
+}
+
 func handlePDFDownload(factory workspace.Factory, store *authdb.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimPrefix(r.URL.Path, "/d/")
