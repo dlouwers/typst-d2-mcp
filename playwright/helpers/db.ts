@@ -89,3 +89,17 @@ export function seedQuota(login: string, quota: number | null): void {
       WHERE github_login = '${login}'`,
   );
 }
+
+/** Number of organisation owners. */
+export function orgCount(): number {
+  return Number(
+    sql(`SELECT COUNT(*) FROM owners WHERE kind = 'org'`).trim(),
+  );
+}
+
+/** Number of members in an organisation. */
+export function orgMemberCount(slug: string): number {
+  return Number(
+    sql(`SELECT COUNT(*) FROM org_members WHERE org_slug = '${slug}'`).trim(),
+  );
+}
