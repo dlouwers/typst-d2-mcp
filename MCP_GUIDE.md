@@ -199,6 +199,36 @@ The tool supports all D2 syntax features:
 ]
 ```
 
+### Captioned Diagrams (inside `#figure`)
+
+A captioned diagram is the common case, and both of these work:
+
+```typst
+// Code context — no hash on the d2 call, because #figure(...) has
+// already crossed into code.
+#figure(
+  d2(layout: "elk", theme: "0")[
+    client -> server
+  ],
+  caption: [Request path.],
+)
+
+// Markup context — the argument is a content block, so the call keeps
+// its hash.
+#figure(
+  [#d2(layout: "elk", theme: "0")[
+    client -> server
+  ]],
+  caption: [Request path.],
+)
+```
+
+Writing `#d2` directly inside the argument list — `#figure(#d2[a -> b],
+caption: [...])` — is strictly a Typst error, because `#` crosses from
+markup into code exactly once and inside `#figure(...)` you are already
+there. The preprocessor accepts it anyway and drops the extra hash, so
+all three spellings compile.
+
 ## Best Practices for Diagram Layout
 
 ### Understanding Page Constraints

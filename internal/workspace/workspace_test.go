@@ -296,3 +296,48 @@ func TestAppendFile_CreatesParentDirs(t *testing.T) {
 		t.Errorf("appended file not created: %v", err)
 	}
 }
+
+// A file staged by an in-flight compile is server scratch, not tenant
+// data: counting it would let a large document briefly inflate reported
+// usage, or push its own compile over a byte budget.
+func TestDirBytes_SkipsStagedFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "real.txt"), make([]byte, 100), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DirBytes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 100 {
+		t.Fatalf("baseline = %d, want 100", got)
+	}
+
+	staged := filepath.Join(dir, StagePrefix+"123.typ")
+	if err := os.WriteFile(staged, make([]byte, 5000), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = DirBytes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 100 {
+		t.Errorf("with a staged file DirBytes = %d, want 100", got)
+	}
+
+	// A nested one, too — documents live in subdirectories.
+	sub := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, StagePrefix+"456.typ"), make([]byte, 5000), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = DirBytes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 100 {
+		t.Errorf("with a nested staged file DirBytes = %d, want 100", got)
+	}
+}

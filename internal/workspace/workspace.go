@@ -144,12 +144,22 @@ func Usage(r Resolver) (bytes int64, tracked bool, err error) {
 	return total, true, nil
 }
 
+// StagePrefix marks a file the server staged inside a workspace for the
+// duration of one compile. The preprocessed source has to live next to
+// the document's assets for typst to resolve their relative paths, which
+// means it lands in the workspace — but it is server scratch, not the
+// tenant's data, so it does not count towards usage and must not be
+// mistaken for something the caller put there.
+const StagePrefix = ".typst-d2-stage-"
+
 // DirBytes returns the summed size of the regular files under dir,
 // walking recursively. Symlinks and other irregular entries are skipped
 // (their size is meaningless and WalkDir does not follow them), matching
-// how the sweeper measures a workspace. A dir that does not exist counts
-// as zero: a user who has written nothing yet has an empty workspace, not
-// an error.
+// how the sweeper measures a workspace. Files staged by an in-flight
+// compile are skipped too — counting them would let a large document
+// briefly inflate reported usage, or push its own compile over a byte
+// budget. A dir that does not exist counts as zero: a user who has
+// written nothing yet has an empty workspace, not an error.
 func DirBytes(dir string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -170,6 +180,9 @@ func DirBytes(dir string) (int64, error) {
 			return err
 		}
 		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), StagePrefix) {
 			return nil
 		}
 		total += info.Size()

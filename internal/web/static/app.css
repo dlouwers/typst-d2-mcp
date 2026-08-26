@@ -1,6 +1,11 @@
 /* Admin UI layout. Colour, type and spacing all come from the
    Stormlantern tokens; nothing here invents a value that a token
-   already defines. */
+   already defines.
+
+   Note the accent split: --sl-color-accent is the brand orange as a
+   FILL, and measures 2.73 against a light surface when used as text.
+   Anything that colours text with the accent wants --sl-color-accent-text
+   (orange.700 light, orange.300 dark). See stormlantern-design-system#18. */
 
 body {
   margin: 0;
@@ -31,7 +36,7 @@ body {
 }
 .topbar nav { display: flex; align-items: center; gap: var(--sl-space-4); }
 .topbar nav a { color: var(--sl-color-ink); text-decoration: none; }
-.topbar nav a:hover { color: var(--sl-color-accent); }
+.topbar nav a:hover { color: var(--sl-color-accent-text); }
 .who { color: var(--sl-color-muted); font-size: var(--sl-font-size-sm); }
 form.inline { display: inline-flex; align-items: center; gap: var(--sl-space-2); margin: 0; }
 
@@ -93,7 +98,7 @@ input.narrow { width: 6rem; }
 
 /* Per-row management uses <details> rather than a modal: it needs no
    JavaScript, and the confirm field stays in the normal tab order. */
-td.actions details > summary { cursor: pointer; color: var(--sl-color-accent); }
+td.actions details > summary { cursor: pointer; color: var(--sl-color-accent-text); }
 td.actions .panel {
   display: flex;
   flex-direction: column;

@@ -21,6 +21,12 @@ type D2Block struct {
 	End     int
 	Options d2.Options
 	Code    string
+
+	// CodeContext is true when the call was found in Typst code mode
+	// rather than markup — `#figure(d2(...)[...], caption: [...])`.
+	// The replacement must then omit the leading `#`, which typst
+	// rejects there ("the character `#` is not valid in code").
+	CodeContext bool
 }
 
 // PreprocessFile reads a Typst file from the local filesystem, processes all
@@ -53,7 +59,21 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 	content = regexp.MustCompile(`#import\s+["'].*?lib\.typ["'].*?\n`).ReplaceAllString(content, "")
 
 	// Find all D2 calls
-	d2Blocks := extractD2Calls(content)
+	d2Blocks, skipped := extractD2Calls(content)
+
+	// A call site the scanner recognised but could not extract used to
+	// be left in the source for typst to trip over, several layers
+	// later, with an error naming the wrong construct — usually
+	// "unclosed delimiter" at a bracket that was in fact balanced.
+	// Failing here instead costs nothing and names the actual cause.
+	if len(skipped) > 0 {
+		site := skipped[0]
+		line, col := lineCol(content, site.Offset)
+		return "", fmt.Errorf(
+			"preprocessor: %s:%d:%d: found a d2 diagram block but could not extract it (%s). "+
+				"It was left unprocessed, so typst would fail on the D2 source with a misleading error",
+			inputPath, line, col, site.Reason)
+	}
 
 	if len(d2Blocks) == 0 {
 		slog.DebugContext(ctx, "no d2 blocks in input")
@@ -73,7 +93,7 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 		}
 
 		// Convert to Typst image
-		typstImg := svgToTypstImage(svg, block.Options)
+		typstImg := svgToTypstImage(svg, block.Options, block.CodeContext)
 
 		// Replace in content
 		content = content[:block.Start] + typstImg + content[block.End:]
@@ -89,8 +109,19 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 // content. Delegates to the Typst-aware scanner in scan.go; see the
 // commentary there for what we recognise and what we deliberately
 // don't.
-func extractD2Calls(content string) []D2Block {
+func extractD2Calls(content string) ([]D2Block, []SkipSite) {
 	return scanD2Calls(content)
+}
+
+// lineCol converts a byte offset into 1-based line and column numbers,
+// so preprocessor errors point at the same coordinates typst would.
+func lineCol(content string, offset int) (int, int) {
+	if offset > len(content) {
+		offset = len(content)
+	}
+	line := 1 + strings.Count(content[:offset], "\n")
+	col := offset - (strings.LastIndex(content[:offset], "\n") + 1) + 1
+	return line, col
 }
 
 // parseOptions extracts key-value pairs from the options string.
@@ -129,7 +160,15 @@ func parseOptions(optionsStr string) d2.Options {
 // the literal "intrinsic" disables the constraint entirely so the SVG
 // renders at its natural size (rarely what you want, but supported for
 // callers who know).
-func svgToTypstImage(svgContent string, options d2.Options) string {
+//
+// The expression is built without a hash and gets one only at the very
+// end, and only in markup. Typst allows `#` exactly once, to cross from
+// markup into code: inside an argument list we are already in code, and
+// a second one is a hard error. That applies both to a call found in
+// code context (codeContext, e.g. inside #figure(...)) and to the pad
+// wrapper, which used to nest one unconditionally — `#pad(4pt,
+// #image(...))` never compiled.
+func svgToTypstImage(svgContent string, options d2.Options, codeContext bool) string {
 	b64 := base64.StdEncoding.EncodeToString([]byte(svgContent))
 
 	width, ok := options["width"]
@@ -138,16 +177,19 @@ func svgToTypstImage(svgContent string, options d2.Options) string {
 	}
 	var typstCode string
 	if width == "none" || width == "intrinsic" {
-		typstCode = fmt.Sprintf(`#image(decode64("%s"), format: "svg")`, b64)
+		typstCode = fmt.Sprintf(`image(decode64("%s"), format: "svg")`, b64)
 	} else {
-		typstCode = fmt.Sprintf(`#image(decode64("%s"), format: "svg", width: %s)`, b64, width)
+		typstCode = fmt.Sprintf(`image(decode64("%s"), format: "svg", width: %s)`, b64, width)
 	}
 
 	if pad, ok := options["pad"]; ok && pad != "none" {
-		typstCode = fmt.Sprintf(`#pad(%s, %s)`, pad, typstCode)
+		typstCode = fmt.Sprintf(`pad(%s, %s)`, pad, typstCode)
 	}
 
-	return typstCode
+	if codeContext {
+		return typstCode
+	}
+	return "#" + typstCode
 }
 
 // addBasedImport adds the based package import at the top of the file.

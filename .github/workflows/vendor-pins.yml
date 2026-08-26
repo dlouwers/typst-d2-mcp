@@ -1,0 +1,53 @@
+name: Vendor pins
+
+# htmx and its SSE extension are vendored by hand and pinned in
+# internal/web/vendorpins.json. `go test` proves the manifest matches the
+# committed bytes, offline, on every run — see vendorpins_test.go.
+#
+# This workflow adds what a hash of our own file cannot: that those bytes are
+# what the package actually published at that version, and whether a newer
+# version exists.
+#
+# It needs no credentials and no Go, so it stays independent of the CI job —
+# a failure here says something about the vendored assets, not about the code.
+# That independence matters more here than in the sibling repo: every other
+# job in this repo now needs a design-system token to build at all, and this
+# one deliberately does not.
+
+on:
+  pull_request:
+    paths:
+      - 'internal/web/vendorpins.json'
+      - 'internal/web/static/vendor/htmx*'
+      - 'scripts/check-vendor-pins.sh'
+      - '.github/workflows/vendor-pins.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'internal/web/vendorpins.json'
+      - 'internal/web/static/vendor/htmx*'
+      - 'scripts/check-vendor-pins.sh'
+      - '.github/workflows/vendor-pins.yml'
+  # Staleness only becomes visible with time, so it needs a trigger that is
+  # not "someone touched the file" — the whole failure mode here was an asset
+  # nobody touched for a year.
+  schedule:
+    - cron: '41 6 * * 1'
+  workflow_dispatch: {}
+
+concurrency:
+  group: vendor-pins-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: vendored assets match their registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check pins against the registry
+        run: ./scripts/check-vendor-pins.sh

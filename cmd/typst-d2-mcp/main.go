@@ -202,46 +202,23 @@ func int64Env(key string, def int64) int64 {
 	return n
 }
 
-// serverInstructions is sent once at the MCP initialize handshake. Moving
-// this guidance out of the per-tool description keeps it available to the
-// model without re-spending tokens on every tool call. Keep it focused on
-// strategy and anti-patterns the model needs across multiple compiles;
-// the per-call rule lives in the tool description.
+// serverInstructions is sent once at the MCP initialize handshake, and
+// what it holds is chosen by what survives truncation. Clients cap the
+// instructions they forward, and this string had grown long enough that
+// the most consequential part of it — the house templates, appended at
+// the end — was being cut before it reached the model. So: strategy
+// that changes what the model DOES, near the front, and nothing that a
+// tool description could carry instead.
+//
+// Diagram layout guidance in particular now lives on
+// compile_typst_with_d2, which is never truncated and is read exactly
+// when it is relevant. templateInstructions() is prepended, not
+// appended, for the same reason.
 const serverInstructions = `You can author Typst documents containing #d2[...] blocks and compile them
-to PDF with the compile_typst_with_d2 tool. The notes below apply across
-every diagram in a session — the tool description itself stays brief.
-
-DIAGRAM LAYOUT — A4 PORTRAIT (Typst default):
-  Usable area is roughly 17cm wide × 25cm tall, so vertical layouts breathe
-  while horizontal layouts get cramped. Prefer "direction: down" inside the
-  D2 block whenever a diagram has more than a handful of nodes.
-
-STAR-TOPOLOGY ANTI-PATTERN:
-  A central node connecting to 5+ siblings forces the ELK layout engine to
-  spread the children horizontally even when "direction: down" is set. The
-  fix is a vertical chain:
-
-      // BAD (renders horizontally on A4 portrait)
-      center -> a
-      center -> b
-      center -> c
-      center -> d
-      center -> e
-
-      // GOOD
-      center -> a -> b -> c -> d -> e
-
-  Org charts with two or three direct reports can stay as a star; four or
-  more children means convert to a chain or split into multiple diagrams.
-
-A4 LANDSCAPE (#set page(flipped: true)):
-  Usable area becomes ~25cm × 17cm. Prefer "direction: right" for wide
-  hierarchies; vertical chains still work but waste horizontal space.
-
-PRINT-FRIENDLY DEFAULTS:
-  - layout: "elk"  (best automatic layout)
-  - theme: "0"     (white background, good contrast on paper)
-  - Avoid dark themes (100–200 range) for print.
+to PDF with the compile_typst_with_d2 tool. Diagram layout guidance —
+page geometry, the star-topology anti-pattern, print-friendly defaults —
+is on that tool's description; the notes below are what applies across a
+whole session.
 
 SYNTAX EXAMPLES:
   Basic:
@@ -259,6 +236,15 @@ SYNTAX EXAMPLES:
       frontend -> backend: API calls
       backend  -> database: Queries
     ]
+
+  Captioned (the common case) — inside #figure the call is in code
+  context, so it carries no hash:
+    #figure(
+      d2(layout: "elk", theme: "0")[
+        client -> server
+      ],
+      caption: [Request path.],
+    )
 
 VERIFYING THE RESULT:
   After a successful compile, open the produced PDF if you can. Check that
@@ -284,6 +270,13 @@ WORKSPACE, FILES & LIMITS (put_file / workspace_info):
   base64 text), then send the first slice with mode "overwrite" and each
   remaining slice with mode "append". Each slice must be within the
   per-call limit; the slices concatenate verbatim on disk.
+
+  FONTS: the render environment has a small fixed set of families, and
+  typst SUBSTITUTES an unknown one silently while still exiting 0 — the
+  PDF looks fine and is wrong. Check workspace_info.font_families before
+  setting a font. To use your own typefaces, put_file the .ttf/.otf into
+  the workspace "fonts/" directory; they are visible only to your
+  workspace and are not aged out.
 
   A hosted workspace may also have a cumulative byte budget across all
   its files. Call workspace_info first — it returns per_call_limit_bytes,
@@ -382,12 +375,12 @@ func templateInstructions() string {
 	if _, err := os.Stat(pkg); err != nil {
 		return ""
 	}
-	return fmt.Sprintf(`
-
-HOUSE TEMPLATES:
+	return fmt.Sprintf(`HOUSE TEMPLATES — READ THIS FIRST:
   This server ships document templates. Prefer them over styling a
   document yourself — they exist so that documents from different
   people, written at different times, come out looking the same.
+  Reach for one whenever you are asked for a report, a memo, or a
+  decision record, before writing any #set or #show rules of your own.
 
     #import "@%[1]s/%[2]s:%[3]s": report, adr
 
@@ -419,8 +412,51 @@ HOUSE TEMPLATES:
 
   Do not override the template's fonts, colours or page setup. A
   document that restyles itself has opted out of the house style, which
-  is the one thing these templates exist to prevent.`,
+  is the one thing these templates exist to prevent.
+
+`,
 		templateNamespace, templateName, templateVersion)
+}
+
+// selfStyling marks a document as having taken its own look in hand.
+// Each is something a template would otherwise own.
+var selfStyling = []string{
+	"#set page(",
+	"#set text(",
+	"#set par(",
+	"#show heading",
+	"#set heading(",
+}
+
+// templateNudge returns a note to append to a successful compile when a
+// document styles itself but imports no house template, and "" when
+// there is nothing to say.
+//
+// The instructions already ask for templates to be preferred, but
+// instructions are advisory, arrive once, and get truncated by clients
+// — a caller can finish a whole document without ever having seen them.
+// A compile is the one moment the server knows both what was written
+// and what was available, so it is the honest place to mention it.
+// Deliberately a note on a success, not a warning or a failure: styling
+// a document by hand is allowed, just rarely what was wanted.
+func templateNudge(src string) string {
+	if templateInstructions() == "" {
+		return "" // no package installed; nothing to point at
+	}
+	importPath := fmt.Sprintf("@%s/%s:%s", templateNamespace, templateName, templateVersion)
+	if strings.Contains(src, importPath) {
+		return ""
+	}
+	for _, marker := range selfStyling {
+		if strings.Contains(src, marker) {
+			return fmt.Sprintf(
+				"NOTE: this document sets its own page/text/heading rules and imports no "+
+					"template. House templates are available and are what keeps documents "+
+					"consistent:\n  #import \"%s\": report, adr\n"+
+					"See the server instructions for their arguments.", importPath)
+		}
+	}
+	return ""
 }
 
 func main() {
@@ -455,7 +491,12 @@ func main() {
 		serverVersion,
 		server.WithToolCapabilities(false),
 		server.WithResourceCapabilities(false, false),
-		server.WithInstructions(serverInstructions+templateInstructions()),
+		// Templates FIRST. Appended, they sat behind the longest part
+		// of the instructions and were the first thing a client's
+		// truncation limit cut — which made the server's main
+		// consistency mechanism undiscoverable to the callers who
+		// most needed it.
+		server.WithInstructions(templateInstructions()+serverInstructions),
 	)
 
 	registerTools(s, factory, store)
@@ -875,12 +916,13 @@ func resolverFor(ctx context.Context, factory workspace.Factory) (workspace.Reso
 	return r, nil
 }
 
-func registerTools(s *server.MCPServer, factory workspace.Factory, store *authdb.Store) {
-	// The bulk of the layout strategy lives in server instructions above so
-	// it isn't re-sent on every tool call. The description below carries
-	// only the rules the model needs at the moment it decides to call.
-	compileTypstTool := mcp.NewTool("compile_typst_with_d2",
-		mcp.WithDescription(`Compile a Typst document containing #d2[...] diagram blocks to PDF.
+// Layout guidance lives HERE rather than in the server instructions.
+// It costs tokens on every call, which is why it used to sit in the
+// instructions — but the instructions are truncated by clients and
+// this is read at exactly the moment it applies, which is the better
+// trade. What stays in the instructions is what spans a session.
+func compileToolDescription() string {
+	return `Compile a Typst document containing #d2[...] diagram blocks to PDF.
 
 Each #d2(opts)[code] block is rendered to SVG via the d2 CLI,
 base64-embedded, and the source compiled with typst. The PDF is written
@@ -888,13 +930,47 @@ next to the input .typ in the active workspace; a resource_link in the
 result points at it (fetch with resources/read on its typst-d2://pdf/...
 URI).
 
-Quick rules (full strategy in the server's instructions):
-  - Default layout "elk", theme "0" for print-friendly diagrams.
-  - On A4 portrait, add 'direction: down' inside the D2 block.
-  - A central node with 4+ children renders horizontally — use a chain.
+DIAGRAM LAYOUT — A4 PORTRAIT (the Typst default):
+  Usable area is roughly 17cm wide × 25cm tall, so vertical layouts
+  breathe while horizontal ones get cramped. Prefer 'direction: down'
+  inside the D2 block for anything past a handful of nodes.
+
+STAR-TOPOLOGY ANTI-PATTERN:
+  A central node with 5+ siblings forces ELK to spread the children
+  horizontally even when 'direction: down' is set. Chain them instead:
+
+      center -> a    // BAD: renders horizontally on A4 portrait
+      center -> b
+      center -> c
+      center -> d
+
+      center -> a -> b -> c -> d    // GOOD
+
+  Two or three direct reports can stay a star; four or more means a
+  chain, or split into several diagrams.
+
+A4 LANDSCAPE (#set page(flipped: true)):
+  ~25cm × 17cm. Prefer 'direction: right' for wide hierarchies.
+
+PRINT-FRIENDLY DEFAULTS:
+  layout "elk" (best automatic layout), theme "0" (white background,
+  good contrast on paper). Avoid dark themes (100–200) for print.
 
 After compiling, inspect the PDF if you can; if a diagram looks cramped,
-split it, simplify it, or switch to 'direction: down'.`),
+add 'direction: down', split it, or simplify it. If you cannot view the
+PDF yourself, tell the user to check the layout.
+
+A relative path in the document — #image("logo.svg"), #read("data.csv"),
+#import "style.typ" — resolves against the directory of the .typ file
+being compiled, so an asset pushed with put_file next to the document is
+referenced by its plain name. In scoped/hosted mode a leading slash
+addresses the workspace root ("/assets/logo.svg"), and typst cannot read
+outside the workspace.`
+}
+
+func registerTools(s *server.MCPServer, factory workspace.Factory, store *authdb.Store) {
+	compileTypstTool := mcp.NewTool("compile_typst_with_d2",
+		mcp.WithDescription(compileToolDescription()),
 		mcp.WithString("file_path",
 			mcp.Required(),
 			mcp.Description("Path to the Typst source file (.typ) containing #d2[...] blocks. Absolute in local stdio mode; workspace-relative in scoped/hosted mode."),
@@ -917,8 +993,12 @@ may also have a cumulative byte budget — call workspace_info to check the
 limit and remaining space before a large push.
 
 Paths are workspace-relative in scoped/hosted mode (traversal rejected),
-any path in local mode. See the server instructions for the full file /
-upload guide.`,
+any path in local mode.
+
+A file pushed here IS referenceable from a document you then compile:
+put an asset beside the .typ that uses it and name it relatively —
+put_file "logo.svg" then #image("logo.svg"). See the server instructions
+for the full file / upload guide.`,
 			inputLimit, humanBytes(inputLimit))),
 		mcp.WithString("path",
 			mcp.Required(),
@@ -951,6 +1031,14 @@ No arguments; returns JSON:
   - budget_bytes / available_bytes (+ *_human): the cumulative cap and
     remaining space, present only when a budget is configured (absent =
     no cap). A put_file over available_bytes is rejected.
+  - typst_version / d2_version: the binaries this server actually runs.
+  - font_families: every font family a compile can resolve, including
+    any you have pushed. Typst SUBSTITUTES an unknown family silently
+    and still exits 0, so a document naming one produces a PDF that
+    looks fine and is wrong — check this list before setting a font.
+  - fonts_dir: push .ttf/.otf files here (via put_file) to use your own
+    typefaces; they are visible only to your workspace. Present only
+    where the workspace is bounded.
 
 See the server instructions for the full file / upload guide.`),
 	)
@@ -1048,7 +1136,19 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 			return mcp.NewToolResultErrorFromErr("Preprocessing failed", err), nil
 		}
 
-		tmpFile, err := os.CreateTemp("", "typst-d2-*.typ")
+		// Stage the preprocessed source NEXT TO the input rather than in
+		// /tmp. typst resolves a document's relative paths against the
+		// directory of the file it is handed, so staging in /tmp made
+		// every asset pushed with put_file unreachable: put_file
+		// reported success, and the failure surfaced later as
+		// "file not found (searched at /tmp/logo.svg)", which reads
+		// like a document bug rather than a server one.
+		//
+		// The staged file is removed on the way out, and the workspace
+		// sweeper would collect it anyway if a crash left one behind.
+		// workspace.DirBytes skips the prefix so a compile in flight
+		// does not inflate reported usage or eat into a byte budget.
+		tmpFile, err := os.CreateTemp(filepath.Dir(resolvedIn), workspace.StagePrefix+"*.typ")
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("Failed to create temp file", err), nil
 		}
@@ -1074,7 +1174,7 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		// reported as a clean compile. We surface warnings to the
 		// caller so the LLM/operator can act on them.
 		var stdoutBuf, stderrBuf bytes.Buffer
-		cmd := exec.CommandContext(ctx, "typst", "compile", tmpFile.Name(), resolvedOut)
+		cmd := exec.CommandContext(ctx, "typst", typstArgs(resolver, tmpFile.Name(), resolvedOut)...)
 		cmd.Stdout = &stdoutBuf
 		cmd.Stderr = &stderrBuf
 		err = cmd.Run()
@@ -1107,6 +1207,14 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		successMsg += "   - Split large diagrams into multiple focused diagrams\n"
 		successMsg += "   - Reduce number of nodes or simplify structure\n"
 		successMsg += "\nIf you cannot view the PDF yourself, inform the user to check the layout."
+
+		// Instructions are advisory and get truncated; a warning on a
+		// successful compile is neither. If the document styled itself
+		// by hand while the house templates sat right there, say so
+		// where it cannot be missed.
+		if nudge := templateNudge(processed); nudge != "" {
+			successMsg += "\n\n" + nudge
+		}
 
 		// Typst exits 0 with warnings on stderr. Surface them or
 		// they get silently dropped — and a "successful" compile
@@ -1166,6 +1274,30 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 // factory, and streams the PDF bytes. There is intentionally no
 // Bearer/auth check: the random token IS the credential, by design
 // (RFC-7239 §1 capability URL pattern).
+// typstArgs builds the typst invocation for a staged source file.
+//
+// A bounded workspace becomes typst's root, which does two things: it
+// lets a document address an asset from the workspace root ("/logo.svg")
+// as well as relatively, and it stops typst reading anything outside the
+// tenant's own directory. An unbounded resolver (stdio mode, where the
+// "workspace" is the user's filesystem) gets no --root, leaving typst's
+// default of the input file's own directory.
+//
+// A workspace fonts/ directory, if present, is added as a font path so
+// a tenant can set documents in its own typefaces. The path is inside
+// the tenant's own root, so one workspace's fonts are not visible to
+// another.
+func typstArgs(r workspace.Resolver, in, out string) []string {
+	args := []string{"compile"}
+	if b, ok := r.(workspace.Bounded); ok {
+		args = append(args, "--root", b.WorkspaceRoot())
+	}
+	if fonts := workspaceFontPath(r); fonts != "" {
+		args = append(args, "--font-path", fonts)
+	}
+	return append(args, in, out)
+}
+
 func handlePDFDownload(factory workspace.Factory, store *authdb.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := strings.TrimPrefix(r.URL.Path, "/d/")
@@ -1365,6 +1497,16 @@ type workspaceInfo struct {
 	BudgetHuman       string `json:"budget_human,omitempty"`
 	AvailableBytes    *int64 `json:"available_bytes,omitempty"`
 	AvailableHuman    string `json:"available_human,omitempty"`
+
+	// What this environment can actually do, as opposed to how much of
+	// it is left. A caller had no way to learn any of this short of
+	// spending a compile on a probe document — and typst substitutes a
+	// missing font silently, so the probe was the only way to find out
+	// at all.
+	TypstVersion string   `json:"typst_version,omitempty"`
+	D2Version    string   `json:"d2_version,omitempty"`
+	FontFamilies []string `json:"font_families,omitempty"`
+	FontsDir     string   `json:"fonts_dir,omitempty"`
 }
 
 func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.ToolHandlerFunc {
@@ -1378,10 +1520,17 @@ func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("measure workspace", err), nil
 		}
+		typstVersion, d2Version := toolVersions()
 		info := workspaceInfo{
 			PerCallLimitBytes: limit,
 			PerCallLimitHuman: humanBytes(limit),
 			UsageTracked:      tracked,
+			TypstVersion:      typstVersion,
+			D2Version:         d2Version,
+			FontFamilies:      fontFamilies(workspaceFontPath(resolver)),
+		}
+		if _, ok := resolver.(workspace.Bounded); ok {
+			info.FontsDir = FontsDir
 		}
 		if tracked {
 			u := used

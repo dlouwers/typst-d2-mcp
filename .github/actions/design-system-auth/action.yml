@@ -1,0 +1,119 @@
+name: Authenticate to the design system
+description: >
+  Mint a short-lived token for dlouwers/stormlantern-design-system and point
+  the Go toolchain at it, so `go mod download` can fetch the private module.
+
+# Factored out of ci.yml because both the build and playwright jobs need it,
+# and every Go command in either job depends on it having run. Two copies of
+# these steps is two things to keep in step — and a copy that silently falls
+# behind is exactly the failure that made this repo serve a stale design
+# system for a day (#80).
+#
+# ---------------------------------------------------------------------------
+# The app
+# ---------------------------------------------------------------------------
+#
+# `stormlantern-actions-read` — app id 4634915, client id
+# Iv23lixvWvv974Iv2bPY. One permission, Repository -> Contents -> Read-only,
+# installed on dlouwers/stormlantern-design-system only.
+#
+# A GitHub App rather than a personal access token: the token is minted per
+# run and expires in an hour, it belongs to the account rather than to a
+# person whose access it would otherwise inherit, and there is no annual
+# expiry to renew by hand.
+#
+# These notes lived in scripts/sync-vendor.sh, which #80 deleted along with
+# the copy step. They are here now because this is where the credential is
+# used, and because losing them cost a key rotation: the .pem is downloadable
+# exactly once, and nothing recorded how the app was set up.
+#
+# ---------------------------------------------------------------------------
+# Setting it up in a NEW consumer repo
+# ---------------------------------------------------------------------------
+#
+#   gh variable set DS_APP_CLIENT_ID -R <owner>/<repo> --body Iv23lixvWvv974Iv2bPY
+#   gh secret set DS_APP_PRIVATE_KEY -R <owner>/<repo> --app actions    < key.pem
+#   gh secret set DS_APP_PRIVATE_KEY -R <owner>/<repo> --app dependabot < key.pem
+#
+# The app needs no further installation — it is installed on the repository
+# being READ, so a consumer only holds credentials.
+#
+# Both secret stores, not one. Dependabot-triggered runs never see Actions
+# secrets, and since the design system became a Go module a run without the
+# key cannot resolve the dependency at all — so a missing Dependabot secret
+# is a Dependabot PR that fails at `go mod download`, every time.
+#
+# The client id is a repository variable because it is not secret. Only the
+# private key is.
+#
+# ---------------------------------------------------------------------------
+# Rotating the key
+# ---------------------------------------------------------------------------
+#
+# Generate a new private key on the app (Settings -> Developer settings ->
+# GitHub Apps -> stormlantern-actions-read -> Private keys). Generating ADDS a
+# key; the old one keeps working, so there is no outage window.
+#
+# Then set it in every store that holds it. To find them all rather than
+# trusting a list that will go stale:
+#
+#   for r in $(gh repo list <owner> --limit 40 --json nameWithOwner -q '.[].nameWithOwner'); do
+#     for app in actions dependabot codespaces; do
+#       gh secret list -R "$r" --app "$app" 2>/dev/null | grep -q DS_APP_PRIVATE_KEY \
+#         && echo "$r [$app]"
+#     done
+#   done
+#
+# Finally DELETE the old key on the app and remove the local .pem. Skipping
+# that turns a rotation into an accumulation.
+
+inputs:
+  client-id:
+    description: GitHub App client id (a repository variable; not secret).
+    required: true
+  private-key:
+    description: GitHub App private key (a secret).
+    required: true
+
+outputs:
+  token:
+    description: >
+      The minted installation token. Exposed for callers that need the raw
+      value rather than a configured git — the container build passes it to
+      BuildKit as a secret, because `go mod download` runs inside the image
+      build where the runner's git config does not reach.
+    value: ${{ steps.token.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    # A GitHub App rather than a PAT: minted per run, expires in an hour,
+    # owned by the account rather than by a person whose access it would
+    # otherwise inherit, and nothing to renew by hand each year.
+    # No timeout-minutes here: composite actions do not support it on
+    # steps, and the workflow rejects the file outright if you try. The
+    # per-step 2 minute cap this had as an inline step is therefore gone;
+    # the job-level timeout is what bounds a hung mint now.
+    - name: Mint a token
+      id: token
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      with:
+        client-id: ${{ inputs.client-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: dlouwers
+        repositories: stormlantern-design-system
+
+    # GOPRIVATE keeps the module off the public proxy and checksum database;
+    # url.insteadOf is how the Go toolchain gets a credential without a
+    # .netrc. Both must be in place before ANY go command that resolves
+    # modules — including `go mod download`, and including the build that
+    # playwright's webServer shells out to.
+    - name: Point the Go toolchain at it
+      shell: bash
+      env:
+        TOKEN: ${{ steps.token.outputs.token }}
+      run: |
+        echo "GOPRIVATE=github.com/dlouwers/*" >> "$GITHUB_ENV"
+        git config --global \
+          url."https://x-access-token:${TOKEN}@github.com/".insteadOf \
+          "https://github.com/"
