@@ -25,10 +25,9 @@ possible. The seed target is a sibling of the workspace tree
 never sees it. typst's writable `@preview` cache stays under `$HOME`.
 
 Importing by package name rather than by file path is not a stylistic
-choice. Templates are shared across every tenant and versioned
-independently of any document, so they are not a per-workspace file to
-be copied into each workspace and kept in sync. The package namespace
-also carries the owner (below), which a relative path could not.
+choice: the compile root is the staged `.typ` file's temporary
+directory, not the caller's workspace, so a relative import of a
+workspace file would not resolve at all.
 
 ## Why `house` is a namespace and not a folder name
 
