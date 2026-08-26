@@ -40,9 +40,37 @@ type templateEntry struct {
 	Builtin   bool     `json:"builtin,omitempty"`
 }
 
+// namespaceEntry is a namespace the caller can reach, whether or not
+// anything has been published to it.
+//
+// Listing these is not a nicety. Templates alone answered "what can I
+// import", and left "where can I publish" unanswerable: a caller's own
+// namespace holds nothing until they publish, so it produced no
+// template rows and was invisible. Agents guessed names, were refused,
+// and concluded they had no namespace at all — while owning one (#108).
+type namespaceEntry struct {
+	Name      string `json:"name"`
+	Writable  bool   `json:"writable"`
+	Builtin   bool   `json:"builtin,omitempty"`
+	Templates int    `json:"templates"`
+}
+
 type listTemplatesResult struct {
-	Templates []templateEntry `json:"templates"`
-	Note      string          `json:"note,omitempty"`
+	Namespaces []namespaceEntry `json:"namespaces"`
+	Templates  []templateEntry  `json:"templates"`
+	Note       string           `json:"note,omitempty"`
+}
+
+// ownsNamespace reports whether the caller may publish to a namespace.
+func ownsNamespace(ctx context.Context, store *authdb.Store, id identity.Identity, nsID string) bool {
+	if store == nil || id.IsAnonymous() {
+		return false
+	}
+	role, err := store.RoleFor(ctx, nsID, id.UserID)
+	if err != nil {
+		return false // fail closed: never advertise a write you cannot do
+	}
+	return role == authdb.RoleOwner
 }
 
 func handleListTemplates(store *authdb.Store) server.ToolHandlerFunc {
@@ -53,16 +81,37 @@ func handleListTemplates(store *authdb.Store) server.ToolHandlerFunc {
 			return mcp.NewToolResultErrorFromErr("resolve template namespaces", err), nil
 		}
 
-		out := listTemplatesResult{Templates: []templateEntry{}}
+		out := listTemplatesResult{
+			Namespaces: []namespaceEntry{},
+			Templates:  []templateEntry{},
+		}
+		var writable []string
 		for _, name := range sortedNames(allowed) {
 			// Listed under the NAME, which is what goes in the import;
 			// read from the id, which is where the packages live.
-			out.Templates = append(out.Templates,
-				templatesInNamespace(typstDataDir(), name, allowed[name])...)
+			found := templatesInNamespace(typstDataDir(), name, allowed[name])
+			out.Templates = append(out.Templates, found...)
+
+			canPublish := name != builtinNamespace &&
+				ownsNamespace(ctx, store, id, allowed[name])
+			if canPublish {
+				writable = append(writable, name)
+			}
+			out.Namespaces = append(out.Namespaces, namespaceEntry{
+				Name:      name,
+				Writable:  canPublish,
+				Builtin:   name == builtinNamespace,
+				Templates: len(found),
+			})
 		}
-		if len(out.Templates) == 0 {
-			out.Note = "No templates are installed for you. Style the document yourself, " +
-				"or ask an administrator to publish one."
+		switch {
+		case len(writable) > 0 && len(out.Templates) == 0:
+			out.Note = fmt.Sprintf(
+				"No templates published yet. You can publish one to @%s with publish_template.",
+				writable[0])
+		case len(out.Templates) == 0:
+			out.Note = "No templates are available to you, and you own no namespace to " +
+				"publish one to. Style the document yourself, or ask an administrator."
 		}
 
 		payload, err := json.MarshalIndent(out, "", "  ")
