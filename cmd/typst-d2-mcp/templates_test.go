@@ -91,6 +91,29 @@ Trailing content.
 #show: report.with(title: "Minimal")
 = Only a title
 `,
+		// #124: orientation is the template's, so a caller with a wide
+		// figure needs a route that leaves page setup alone — the one
+		// the instructions and templates/README.md both name. An agent
+		// that found no such route redesigned its diagram worse instead,
+		// so this is here to keep the documented answer true.
+		"report with a rotated wide figure": `#import "@house/templates:0.1.0": report
+#show: report.with(title: "Wide figure")
+= Overview
+#figure(
+  rotate(-90deg, reflow: true,
+    block(width: 24cm, height: 6cm, fill: luma(230))[A very wide diagram]),
+  caption: [A wide diagram, turned to fit the page.],
+)
+`,
+		"adr with a rotated wide figure": `#import "@house/templates:0.1.0": adr
+#show: adr.with(title: "A decision", background: [Why.], decision: [What.], consequences: [So what.])
+== Appendix
+#figure(
+  rotate(-90deg, reflow: true,
+    block(width: 24cm, height: 6cm, fill: luma(230))[A very wide diagram]),
+  caption: [A wide diagram, turned to fit the page.],
+)
+`,
 		// #112: @ref to a heading is impossible in typst without
 		// numbering, and the compiler's own hint is the restyling these
 		// templates forbid. The argument exists so a caller need not

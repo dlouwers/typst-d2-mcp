@@ -452,6 +452,26 @@ func templateInstructions() string {
   single exception, and it is bounded: it decides whether headings are
   numbered and nothing else.
 
+  PAGE ORIENTATION IS THE TEMPLATE'S, not the document's — do not reach
+  for #page(flipped: true). A WIDE FIGURE still has two answers, so do
+  not silently ship a worse diagram for want of one:
+
+    1. Turn the figure, not the page. This leaves the template's page
+       setup untouched:
+
+         #figure(
+           rotate(-90deg, reflow: true, <the wide thing>),
+           caption: [...],
+         )
+
+    2. If a whole document genuinely wants landscape, that is a
+       different template, not an argument on this one. Write it and
+       publish_template it into your own namespace.
+
+  For a D2 diagram specifically, try "direction: down" first — a
+  diagram that is wide because of its layout engine is not a diagram
+  that needs a wider page.
+
 `,
 		templateNamespace, templateName, templateVersion)
 }

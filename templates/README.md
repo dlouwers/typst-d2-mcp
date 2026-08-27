@@ -165,6 +165,34 @@ Two things follow for a template author:
 #let memo(title: "Untitled", cc: none, body) = { ... }
 ```
 
+### Page orientation belongs to the template
+
+Not to the document. Unlike heading numbering, nothing in Typst becomes
+impossible without landscape, so there is no forcing function — and the
+general answer to "I need a different page" is a different template
+published to your namespace, not another argument on this one.
+`numbering:` is the exception that proves the rule.
+
+Note that this is *advice*, not enforcement: a document-level
+`#page(flipped: true)` simply wins, because that is how Typst's page
+rules compose. A caller who flips a page has opted out, and nothing
+here stops them.
+
+The reason to state it anyway is what happens when a caller obeys it
+without knowing the alternatives. An agent writing an architecture
+document wanted one wide page for a five-lifeline sequence diagram,
+found no sanctioned route, and redesigned the diagram narrower —
+"probably the right call, but it was a constraint, not a preference".
+All-or-nothing produced nothing. So the two routes that do exist are
+worth saying out loud:
+
+- **Turn the figure, not the page.** `rotate(-90deg, reflow: true, …)`
+  inside a `#figure` leaves page setup alone and is covered by a
+  compile test, so it is known to work with both house templates.
+- **Write a landscape template.** If a whole document wants landscape,
+  that is a different document type, and publishing one into your own
+  namespace is the supported way to have it.
+
 ### The one styling argument
 
 `report` and `adr` both take `numbering:`, defaulting to `none`. It
