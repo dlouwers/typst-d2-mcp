@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -94,7 +95,7 @@ func TestPageResource_RendersLazilyAndStaysCurrent(t *testing.T) {
 	}
 	before, _, _ := workspace.Usage(resolver)
 
-	got := readResource(t, handleReadPage(f), ctx, pageURIPrefix+"doc.typ/2")
+	got := readResource(t, handleReadPage(f, nil), ctx, pageURIPrefix+"doc.typ/2")
 	blob := got[0].(mcp.BlobResourceContents)
 	if blob.MIMEType != "image/png" {
 		t.Errorf("mime = %q, want image/png", blob.MIMEType)
@@ -115,7 +116,7 @@ func TestPageResource_RendersLazilyAndStaysCurrent(t *testing.T) {
 	if res := putFile(t, ctx, f, "doc.typ", "= Different\n#pagebreak()\n= Pages\n"); res.IsError {
 		t.Fatalf("put_file: %s", resultText(res))
 	}
-	again := readResource(t, handleReadPage(f), ctx, pageURIPrefix+"doc.typ/2")
+	again := readResource(t, handleReadPage(f, nil), ctx, pageURIPrefix+"doc.typ/2")
 	if again[0].(mcp.BlobResourceContents).Blob == blob.Blob {
 		t.Error("a stale page was served after the source changed")
 	}
@@ -133,7 +134,7 @@ func TestPageResource_RejectsBadAddresses(t *testing.T) {
 	} {
 		req := mcp.ReadResourceRequest{}
 		req.Params.URI = uri
-		if _, err := handleReadPage(f)(ctx, req); err == nil {
+		if _, err := handleReadPage(f, nil)(ctx, req); err == nil {
 			t.Errorf("accepted a malformed page address: %s", uri)
 		}
 	}
@@ -159,5 +160,85 @@ func TestResources_ArePerTenant(t *testing.T) {
 	}
 	if strings.Contains(got[0].(mcp.TextResourceContents).Text, "mine.typ") {
 		t.Error("another tenant's index listed my document")
+	}
+}
+
+// An agent could not preview a document that used its organisation's
+// template: the page renderer inherited the server's store, which is
+// keyed by namespace ID rather than name, so @acme/templates was
+// "package not found". Previews worked only for @house — the documents
+// most worth looking at were the ones that could not be.
+func TestPageResource_RendersADocumentUsingAnOrgTemplate(t *testing.T) {
+	requireTypst(t)
+
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+
+	store := newTestStore(t)
+	if err := store.CreateOrg(t.Context(), "admin", "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	member := seedUser(t, store, "member", 21)
+	if err := store.AddOrgMember(t.Context(), "admin", "acme", "member"); err != nil {
+		t.Fatal(err)
+	}
+	nsID, err := store.ResolveName(t.Context(), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackage(t, data, nsID, "1.0.0")
+
+	root := t.TempDir()
+	f := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), member)
+
+	src := "#import \"@acme/templates:1.0.0\": mark\n#mark()\n= Heading\n"
+	if res := putFileStore(t, ctx, f, store, "doc.typ", src); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = pageURIPrefix + "doc.typ/1"
+	got, err := handleReadPage(f, store)(ctx, req)
+	if err != nil {
+		t.Fatalf("a document using an org template could not be previewed: %v", err)
+	}
+	blob := got[0].(mcp.BlobResourceContents)
+	raw, err := base64.StdEncoding.DecodeString(blob.Blob)
+	if err != nil || len(raw) < 100 || string(raw[1:4]) != "PNG" {
+		t.Fatalf("page 1 is not a PNG (%d bytes)", len(raw))
+	}
+}
+
+// And a namespace the caller cannot see stays unreachable from the
+// preview path too — widening what previews resolve must not widen what
+// a caller can reach.
+func TestPageResource_CannotReachAnotherTenantsTemplate(t *testing.T) {
+	requireTypst(t)
+
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+
+	store := newTestStore(t)
+	stranger := seedUser(t, store, "stranger", 22)
+	otherNS, err := store.EnsurePersonalNamespace(t.Context(), stranger.UserID, 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackage(t, data, otherNS, "1.0.0")
+
+	outsider := seedUser(t, store, "outsider", 23)
+	root := t.TempDir()
+	f := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), outsider)
+
+	src := "#import \"@" + authdb.DerivedName(22) + "/templates:1.0.0\": mark\n#mark()\n"
+	if res := putFileStore(t, ctx, f, store, "doc.typ", src); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = pageURIPrefix + "doc.typ/1"
+	if _, err := handleReadPage(f, store)(ctx, req); err == nil {
+		t.Fatal("previewed a document importing another tenant's template")
 	}
 }
