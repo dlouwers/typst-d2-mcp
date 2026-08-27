@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
@@ -177,5 +178,99 @@ func TestListTemplates_RealHouseTemplateExports(t *testing.T) {
 	}
 	if want := []string{"adr", "report"}; !equalStrings(got.Templates[0].Exports, want) {
 		t.Errorf("exports = %v, want %v", got.Templates[0].Exports, want)
+	}
+}
+
+// #108: a caller who has published nothing must still be able to find
+// out which namespace is theirs. Two agents independently guessed
+// names, were refused, and concluded they owned nothing — while owning
+// a namespace the listing never mentioned.
+func TestListTemplates_NamesYourOwnEmptyNamespace(t *testing.T) {
+	// Nothing published anywhere: the case a new caller actually meets.
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+
+	store := newTestStore(t)
+	user := seedUser(t, store, "newcomer", 5)
+	ctx := identity.WithIdentity(context.Background(), user)
+
+	got := listTemplates(t, ctx, store)
+
+	var mine []string
+	for _, ns := range got.Namespaces {
+		if ns.Writable {
+			mine = append(mine, ns.Name)
+		}
+	}
+	if len(mine) != 1 {
+		t.Fatalf("writable namespaces = %v, want exactly the caller's own", mine)
+	}
+	if mine[0] != authdb.DerivedName(5) {
+		t.Errorf("writable namespace = %q, want %q", mine[0], authdb.DerivedName(5))
+	}
+
+	// The built-in is listed but not writable.
+	var sawBuiltin bool
+	for _, ns := range got.Namespaces {
+		if ns.Name == builtinNamespace {
+			sawBuiltin = true
+			if ns.Writable {
+				t.Error("the built-in namespace is advertised as writable")
+			}
+			if !ns.Builtin {
+				t.Error("the built-in is not flagged as such")
+			}
+		}
+	}
+	if !sawBuiltin {
+		t.Error("the built-in namespace is missing from the listing")
+	}
+
+	// With nothing published, the note points somewhere actionable
+	// rather than saying "no templates" and stopping.
+	if !strings.Contains(got.Note, authdb.DerivedName(5)) {
+		t.Errorf("note does not name a namespace to publish to: %q", got.Note)
+	}
+}
+
+// A namespace you are only a member of is visible but not writable —
+// otherwise the listing would advertise a publish that will be refused.
+func TestListTemplates_MembershipIsNotWritable(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	writePackage(t, data, builtinNamespace, "0.1.0")
+
+	store := newTestStore(t)
+	if err := store.CreateOrg(context.Background(), "admin", "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	user := seedUser(t, store, "member", 6)
+	if err := store.AddOrgMember(context.Background(), "admin", "acme", "member"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := listTemplates(t, identity.WithIdentity(context.Background(), user), store)
+	for _, ns := range got.Namespaces {
+		if ns.Name == "acme" && ns.Writable {
+			t.Error("a namespace the caller is only a member of is marked writable")
+		}
+	}
+}
+
+// A refusal must carry its own remedy rather than delegating to a tool.
+func TestPublish_RefusalNamesWhereYouCanPublish(t *testing.T) {
+	f := newPublishFixture(t)
+	f.stage(t, "tpl", map[string]string{"typst.toml": goodTOML, "lib.typ": goodLib})
+
+	res := f.publish(t, "tpl", "a-name-that-is-not-yours", "1.0.0")
+	if !res.IsError {
+		t.Fatal("published into a namespace the caller cannot see")
+	}
+	got := resultText(res)
+	if !strings.Contains(got, f.nsName) {
+		t.Errorf("refusal does not name the caller's own namespace:\n%s", got)
+	}
+	if strings.Contains(got, "call list_templates to see yours") {
+		t.Errorf("refusal still delegates instead of answering:\n%s", got)
 	}
 }
