@@ -254,6 +254,14 @@ VERIFYING THE RESULT:
   yourself, advise the user to inspect it.
 
 WORKSPACE, FILES & LIMITS (put_file / workspace_info):
+  THE WORKSPACE MAY NOT BE ON YOUR MACHINE. Call workspace_info: if it
+  reports location "server", these tools are the only way to reach these
+  files. Do not shell out to check whether a write landed, do not cat or
+  ls a path a tool returned, and do not read a returned path as a path
+  on your filesystem. A local check will report the file missing — which
+  means you are looking in the wrong place, NOT that the write failed.
+  To read a file back, use get_file or the typst-d2://source/ resource.
+
   In hosted (HTTP) mode the server owns a per-tenant workspace and the
   document's own files do not reach it by themselves. Any asset a Typst
   document references — e.g. image("logo.png") — must be pushed with
@@ -1082,10 +1090,16 @@ for the full file / upload guide.`,
 	s.AddTool(putFileTool, handlePutFile(factory, store))
 
 	workspaceInfoTool := mcp.NewTool("workspace_info",
-		mcp.WithDescription(`Report the active workspace's storage limits and current usage. Call
-this before pushing a large asset with put_file to see what will fit.
+		mcp.WithDescription(`Report where the active workspace is and what it can hold. Call this
+first when orienting, and again before pushing a large asset with
+put_file to see what will fit.
 
 No arguments; returns JSON:
+  - location: "server" means the workspace is a directory the server
+    owns and these tools are the ONLY way to reach it — do not try to
+    verify your work by shelling out, and do not treat a path from these
+    tools as a path on your filesystem. "local" means this server shares
+    your filesystem. "access" says the same in a sentence.
   - per_call_limit_bytes / per_call_limit_human: max size of one put_file
     payload, on DECODED bytes.
   - usage_tracked: true in scoped/hosted mode (bounded per-tenant dir),
@@ -1747,6 +1761,20 @@ func projectedUsage(r workspace.Resolver, path string, newSize int64, mode strin
 // (not a misleading zero) when they do not apply: usage in local mode, and
 // budget/available when no budget is configured.
 type workspaceInfo struct {
+	// Where the files are, and what that means for reaching them.
+	//
+	// Agents reason about the workspace as if it were the filesystem
+	// they are standing on: they shell out to check whether a file
+	// landed, try to cat a path a tool just returned, plan around ls.
+	// The failure is quiet in the worst possible way — a local check
+	// reports that the file is not there, which reads as "my write
+	// failed" rather than "I am looking on the wrong machine" — so the
+	// agent redoes work that already succeeded, or concludes the server
+	// is broken. Nothing in the tool surface said otherwise, so this
+	// does, in the tool a caller uses to orient itself.
+	Location string `json:"location"`
+	Access   string `json:"access"`
+
 	PerCallLimitBytes int64  `json:"per_call_limit_bytes"`
 	PerCallLimitHuman string `json:"per_call_limit_human"`
 	UsageTracked      bool   `json:"usage_tracked"`
@@ -1795,6 +1823,16 @@ func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.
 		}
 		if _, ok := resolver.(workspace.Bounded); ok {
 			info.FontsDir = FontsDir
+			info.Location = "server"
+			info.Access = "These files live in a directory the server owns — not your " +
+				"working directory, and possibly not your machine. These MCP tools are " +
+				"the only way to reach them: a shell, ls or cat will not find them, and " +
+				"a path you see here is not a path on your filesystem. Read a file back " +
+				"with get_file or the typst-d2://source/ resource, not by opening it."
+		} else {
+			info.Location = "local"
+			info.Access = "This server shares your filesystem, so these are ordinary " +
+				"local paths and your own tools can read them."
 		}
 		if tracked {
 			u := used
