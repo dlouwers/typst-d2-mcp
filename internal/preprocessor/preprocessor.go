@@ -82,21 +82,27 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 
 	slog.DebugContext(ctx, "rendering d2 blocks", "count", len(d2Blocks))
 
-	// Replace in reverse order to preserve positions
-	for i := len(d2Blocks) - 1; i >= 0; i-- {
-		block := d2Blocks[i]
-
-		// Render D2 to SVG
+	// Render forward, replace backward.
+	//
+	// Replacement must run in reverse so earlier offsets stay valid,
+	// but rendering in that order meant the first failure REACHED was
+	// the last diagram in the document — so a broken first diagram was
+	// reported as "failed to render diagram 3". An agent went hunting
+	// through its third diagram for a fault that was not there (#110).
+	// Rendering first, in document order, makes the diagram named the
+	// diagram to look at.
+	rendered := make([]string, len(d2Blocks))
+	for i, block := range d2Blocks {
 		svg, err := d2.Render(ctx, block.Code, block.Options)
 		if err != nil {
-			return "", fmt.Errorf("failed to render diagram %d: %w", i+1, err)
+			return "", fmt.Errorf("failed to render diagram %d of %d: %w",
+				i+1, len(d2Blocks), err)
 		}
-
-		// Convert to Typst image
-		typstImg := svgToTypstImage(svg, block.Options, block.CodeContext)
-
-		// Replace in content
-		content = content[:block.Start] + typstImg + content[block.End:]
+		rendered[i] = svgToTypstImage(svg, block.Options, block.CodeContext)
+	}
+	for i := len(d2Blocks) - 1; i >= 0; i-- {
+		block := d2Blocks[i]
+		content = content[:block.Start] + rendered[i] + content[block.End:]
 	}
 
 	// Add based package import

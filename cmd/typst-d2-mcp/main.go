@@ -1336,15 +1336,37 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		toolVisibleOut := strings.TrimSuffix(filePath, ".typ") + ".pdf"
 
 		successMsg := fmt.Sprintf("Successfully compiled to %s\n\n", toolVisibleOut)
-		successMsg += "NEXT STEPS:\n"
-		successMsg += "1. Open the PDF to verify diagram layout and readability\n"
-		successMsg += "2. Check that diagrams fit within page margins (not cramped)\n"
-		successMsg += "3. Verify text labels are readable (not too small)\n"
-		successMsg += "4. If diagrams are cramped or text is tiny:\n"
-		successMsg += "   - Add 'direction: down' at top of D2 block (for A4 portrait)\n"
-		successMsg += "   - Split large diagrams into multiple focused diagrams\n"
-		successMsg += "   - Reduce number of nodes or simplify structure\n"
-		successMsg += "\nIf you cannot view the PDF yourself, inform the user to check the layout."
+
+		// #109: the tool's whole output is a file, and the result named
+		// neither where it is nor how big it is. Every agent tested ran
+		// `find /` immediately after a successful compile — which only
+		// worked because the server happened to be local.
+		if info, statErr := os.Stat(resolvedOut); statErr == nil {
+			successMsg += fmt.Sprintf("The PDF is %s", humanBytes(info.Size()))
+			if pages := pdfPageCount(resolvedOut); pages > 0 {
+				successMsg += fmt.Sprintf(", %d page(s)", pages)
+			}
+			successMsg += ".\n"
+		}
+		successMsg += fmt.Sprintf(
+			"Fetch it with resources/read on %s%s — that works whether or not you "+
+				"share a filesystem with this server.\n\n", pdfURIPrefix, toolVisibleOut)
+
+		// Diagram advice only where there are diagrams. Appending it
+		// unconditionally meant telling callers to add 'direction: down'
+		// to documents containing no D2 blocks — two agents said
+		// independently that it trained them to skim the block, which
+		// also carries the real warnings (#110).
+		if strings.Contains(processed, "decode64(") {
+			successMsg += "NEXT STEPS:\n"
+			successMsg += "1. Open the PDF to verify diagram layout and readability\n"
+			successMsg += "2. Check that diagrams fit within page margins (not cramped)\n"
+			successMsg += "3. Verify text labels are readable (not too small)\n"
+			successMsg += "4. If diagrams are cramped or text is tiny:\n"
+			successMsg += "   - Add 'direction: down' at top of D2 block (for A4 portrait)\n"
+			successMsg += "   - Split large diagrams into multiple focused diagrams\n"
+			successMsg += "   - Reduce number of nodes or simplify structure\n"
+		}
 
 		// Instructions are advisory and get truncated; a warning on a
 		// successful compile is neither. If the document styled itself

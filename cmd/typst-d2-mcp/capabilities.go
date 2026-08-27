@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,20 +75,30 @@ var (
 
 // toolVersions reports the typst and d2 versions this image actually
 // runs. They cannot change while the process does, so probe once.
+// missingBinary is what a version field reads when the binary is not
+// there. It is a value rather than an omission on purpose: an omitted
+// field is indistinguishable from one the server does not implement, so
+// a server that cannot render a single diagram looked healthy. An agent
+// wrote a whole document with diagrams before finding out (#110).
+const missingBinary = "NOT INSTALLED"
+
 func toolVersions() (typstVersion, d2Version string) {
 	versionOnce.Do(func() {
-		typstVer = firstLine(mustProbe("typst", "--version"))
-		d2Ver = firstLine(mustProbe("d2", "--version"))
+		typstVer = probeVersion("typst")
+		d2Ver = probeVersion("d2")
 	})
 	return typstVer, d2Ver
 }
 
-func mustProbe(name string, args ...string) string {
-	out, err := runProbe(name, args...)
+func probeVersion(name string) string {
+	out, err := runProbe(name, "--version")
 	if err != nil {
-		return ""
+		return missingBinary
 	}
-	return out
+	if v := firstLine(out); v != "" {
+		return v
+	}
+	return missingBinary
 }
 
 func runProbe(name string, args ...string) (string, error) {
@@ -116,4 +127,44 @@ func firstLine(s string) string {
 		s = s[:i]
 	}
 	return strings.TrimSpace(s)
+}
+
+// pdfPageCount reads the page count straight out of the PDF, so a
+// caller learns how long its document is without needing to open it.
+//
+// Counting "/Type /Page" objects is crude but has no dependency and
+// cannot fail the compile: a zero return simply omits the figure. The
+// alternative — shelling out to a PDF tool — would add a binary the
+// image does not ship, which is the shape of problem #110 is about.
+func pdfPageCount(path string) int {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	// "/Type/Page" with optional whitespace, not followed by "s"
+	// (which would be /Pages, the tree node rather than a leaf).
+	n := 0
+	for i := 0; i+9 < len(raw); i++ {
+		if raw[i] != '/' || !bytes.HasPrefix(raw[i:], []byte("/Type")) {
+			continue
+		}
+		j := i + 5
+		for j < len(raw) && (raw[j] == ' ' || raw[j] == '\n' || raw[j] == '\r') {
+			j++
+		}
+		if !bytes.HasPrefix(raw[j:], []byte("/Page")) {
+			continue
+		}
+		k := j + 5
+		if k < len(raw) && (raw[k] == 's' || isPDFNameByte(raw[k])) {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+func isPDFNameByte(c byte) bool {
+	return c == '-' || c == '_' ||
+		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
