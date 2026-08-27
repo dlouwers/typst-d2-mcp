@@ -326,7 +326,7 @@ func TestPublish_AppearsInListTemplates(t *testing.T) {
 	for _, e := range got.Templates {
 		if e.Import == "@"+f.nsName+"/templates:1.0.0" {
 			found = true
-			if !containsString(e.Exports, "report") {
+			if !containsString(exportNames(e.Exports), "report") {
 				t.Errorf("exports = %v, want report", e.Exports)
 			}
 		}

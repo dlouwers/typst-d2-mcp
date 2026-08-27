@@ -105,6 +105,14 @@
 
 /// A general technical document: title block, then whatever the author
 /// writes. Use this when the content's shape is the author's choice.
+/// A general report: title block, house page furniture, and your
+/// content. Use it as `#show: report.with(title: "...")`, which hands
+/// the document over as the trailing positional `body`.
+///
+/// `numbering:` is off by default and takes a Typst numbering pattern
+/// such as `"1."` or `"1.1"`. Switch it on when the document is long
+/// enough that people need to refer to a section by number; leave it
+/// off for anything short, where numbers are noise.
 #let report(
   title: "Untitled",
   subtitle: none,

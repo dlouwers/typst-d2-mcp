@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
@@ -32,12 +31,15 @@ import (
 
 // templateEntry is one importable package.
 type templateEntry struct {
-	Namespace string   `json:"namespace"`
-	Name      string   `json:"name"`
-	Version   string   `json:"version"`
-	Import    string   `json:"import"`
-	Exports   []string `json:"exports,omitempty"`
-	Builtin   bool     `json:"builtin,omitempty"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Import    string `json:"import"`
+	// Exports describe how to call what the package offers, not only
+	// that it offers it — see exports.go for why the names alone were
+	// not enough.
+	Exports []exportEntry `json:"exports,omitempty"`
+	Builtin bool          `json:"builtin,omitempty"`
 }
 
 // namespaceEntry is a namespace the caller can reach, whether or not
@@ -150,7 +152,7 @@ func templatesInNamespace(dataDir, name, namespaceID string) []templateEntry {
 				Version:   v.Name(),
 				Import:    fmt.Sprintf("@%s/%s:%s", name, pkg.Name(), v.Name()),
 				Builtin:   name == builtinNamespace,
-				Exports: exportedNames(filepath.Join(
+				Exports: parseExports(filepath.Join(
 					nsRoot, pkg.Name(), v.Name(), "lib.typ")),
 			}
 			out = append(out, entry)
@@ -166,38 +168,4 @@ func templatesInNamespace(dataDir, name, namespaceID string) []templateEntry {
 		return out[i].Version < out[j].Version
 	})
 	return out
-}
-
-// exportedNames reports the top-level `#let name(` bindings a template
-// offers, so a caller learns what to import rather than only where from.
-//
-// This reads the entrypoint rather than asking typst, which has no
-// "describe a package" mode. It is deliberately shallow: a name starting
-// with `_` is the package's own business (the house template uses that
-// convention for its internals), and anything this misses costs a caller
-// nothing — the import line, which is the thing they cannot guess, is
-// always right.
-func exportedNames(libPath string) []string {
-	content, err := os.ReadFile(libPath)
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, line := range strings.Split(string(content), "\n") {
-		rest, ok := strings.CutPrefix(line, "#let ")
-		if !ok {
-			continue
-		}
-		end := strings.IndexAny(rest, "( =")
-		if end <= 0 {
-			continue
-		}
-		name := rest[:end]
-		if strings.HasPrefix(name, "_") || name == "" {
-			continue
-		}
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
