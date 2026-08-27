@@ -391,7 +391,9 @@ func templateInstructions() string {
 
   If the look someone wants does not exist yet, write it once and
   publish_template it into your own namespace rather than restyling
-  each document. Everyone has a namespace, so nothing needs granting.
+  each document. Everyone has a namespace, so nothing needs granting —
+  list_templates names it, under "namespaces", flagged writable. Do not
+  guess a namespace name; the one that is yours is listed there.
 
     #import "@%[1]s/%[2]s:%[3]s": report, adr
 
@@ -1101,6 +1103,10 @@ documents from different people, written at different times, come out
 looking the same. Call this before writing any #set or #show rules.
 
 No arguments; returns JSON:
+  - namespaces[]: every namespace you can reach, including ones with
+    nothing in them yet. "writable" marks the ones you may publish to
+    with publish_template — normally your own. This is where you find
+    your own namespace's name; do not guess it.
   - templates[]: namespace, name, version, and the exact "import" string
     to use, plus "exports" — the functions that package offers.
   - builtin: true for the server's house templates, available to
@@ -1295,7 +1301,7 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 			log.Error("namespace resolution failed", "err", err)
 			return mcp.NewToolResultErrorFromErr("resolve template namespaces", err), nil
 		}
-		view, cleanupView, err := packageView(typstDataDir(), allowed)
+		view, cleanupView, err := packageView(typstDataDir(), allowed, workspaceFontPath(resolver))
 		if err != nil {
 			metrics.CompileTotal.WithLabelValues(metrics.ResultFail).Inc()
 			log.Error("package view failed", "err", err)
@@ -1415,24 +1421,24 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 // "workspace" is the user's filesystem) gets no --root, leaving typst's
 // default of the input file's own directory.
 //
-// A workspace fonts/ directory, if present, is added as a font path so
-// a tenant can set documents in its own typefaces. The path is inside
-// the tenant's own root, so one workspace's fonts are not visible to
-// another.
-//
-// extraFontPaths carries font directories the caller has already
-// resolved — today the package view, so a template can ship the
-// typeface it is designed in. Empty strings are ignored.
+// Fonts reach typst through the package view, never as the tenant's own
+// path. A tenant root is <root>/gh:<id>, and typst splits --font-path on
+// ":" — so naming that path directly silently discarded it, which is
+// what #107 was. extraFontPaths therefore carries view paths, and a
+// path that cannot survive the command line is dropped with a warning
+// rather than passed and quietly ignored.
 func typstArgs(r workspace.Resolver, in, out string, extraFontPaths ...string) []string {
 	args := []string{"compile"}
 	if b, ok := r.(workspace.Bounded); ok {
 		args = append(args, "--root", b.WorkspaceRoot())
 	}
-	if fonts := workspaceFontPath(r); fonts != "" {
-		args = append(args, "--font-path", fonts)
-	}
 	for _, p := range extraFontPaths {
-		if p != "" {
+		switch {
+		case p == "":
+		case !safeFontPath(p):
+			slog.Error("refusing to pass a font path containing the list separator; "+
+				"fonts from it would be silently ignored", "path", p)
+		default:
 			args = append(args, "--font-path", p)
 		}
 	}

@@ -131,7 +131,7 @@ func TestPackageView_ExposesOnlyAllowed(t *testing.T) {
 	writePackage(t, data, "acme", "1.0.0")
 	writePackage(t, data, "globex", "1.0.0")
 
-	view, cleanup, err := packageView(data, map[string]string{"house": "house", "acme": "acme"})
+	view, cleanup, err := packageView(data, map[string]string{"house": "house", "acme": "acme"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestPackageView_UnpublishedNamespaceIsSkipped(t *testing.T) {
 	data := t.TempDir()
 	writePackage(t, data, "house", "0.1.0")
 
-	view, cleanup, err := packageView(data, map[string]string{"house": "house", "brand-new-org": "ns-unpublished"})
+	view, cleanup, err := packageView(data, map[string]string{"house": "house", "brand-new-org": "ns-unpublished"}, "")
 	if err != nil {
 		t.Fatalf("an org with nothing published broke the view: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestPackageView_UnpublishedNamespaceIsSkipped(t *testing.T) {
 func TestPackageView_CleanupRemovesIt(t *testing.T) {
 	data := t.TempDir()
 	writePackage(t, data, "house", "0.1.0")
-	view, cleanup, err := packageView(data, map[string]string{"house": "house"})
+	view, cleanup, err := packageView(data, map[string]string{"house": "house"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,8 +386,8 @@ func TestTypstArgs_PackageViewIsAFontPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(typstArgs(r, "in.typ", "out.pdf", packageFontPath("/the/view")), " ")
-	if want := "--font-path " + filepath.Join("/the/view", "typst", "packages"); !strings.Contains(got, want) {
-		t.Errorf("args = %s, want it to contain %s", got, want)
+	if !strings.Contains(got, "--font-path /the/view") {
+		t.Errorf("args = %s, want the view as a font path", got)
 	}
 
 	// An empty extra path must not produce a bare --font-path.
@@ -570,5 +570,69 @@ func TestCompile_ANameOnlyReachesItsOwnNamespace(t *testing.T) {
 	}
 	if got := resultText(res); !strings.Contains(got, "package not found") {
 		t.Errorf("expected an unresolved package, got: %s", got)
+	}
+}
+
+// #107: typst splits --font-path on the OS list separator, and a tenant
+// root is <root>/gh:<id> — so naming that path directly was always
+// discarded, silently. Nothing may reach the command line with a colon
+// in it.
+func TestTypstArgs_NeverPassesAColonInAFontPath(t *testing.T) {
+	root := t.TempDir()
+	tenant := filepath.Join(root, "gh:4242")
+	if err := os.MkdirAll(filepath.Join(tenant, FontsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, err := workspace.NewScopedFS(tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := typstArgs(r, "in.typ", "out.pdf", packageFontPath("/tmp/view-abc"), workspaceFontPath(r))
+	for i, a := range args {
+		if a == "--font-path" && i+1 < len(args) {
+			if strings.Contains(args[i+1], string(os.PathListSeparator)) {
+				t.Errorf("font path %q contains the list separator; typst would split and ignore it", args[i+1])
+			}
+		}
+	}
+}
+
+func TestSafeFontPath(t *testing.T) {
+	if !safeFontPath("/tmp/typst-d2-pkgview-123") {
+		t.Error("a plain path was rejected")
+	}
+	if safeFontPath("/workspaces/gh:4242/fonts") {
+		t.Error("a path containing a colon was accepted; typst would split it")
+	}
+}
+
+// The fix itself: a tenant's fonts must reach typst through the view,
+// whose root has no colon, and the link must resolve to the real files.
+func TestPackageView_LinksWorkspaceFonts(t *testing.T) {
+	data := t.TempDir()
+	writePackage(t, data, "house", "0.1.0")
+
+	tenant := filepath.Join(t.TempDir(), "gh:4242")
+	fonts := filepath.Join(tenant, FontsDir)
+	if err := os.MkdirAll(fonts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fonts, "marker.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	view, cleanup, err := packageView(data, map[string]string{"house": "house"}, fonts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	if strings.Contains(view, string(os.PathListSeparator)) {
+		t.Fatalf("the view root itself contains a separator: %q", view)
+	}
+	linked := filepath.Join(view, FontsDir, "marker.txt")
+	if _, err := os.Stat(linked); err != nil {
+		t.Errorf("tenant fonts are not reachable through the view: %v", err)
 	}
 }

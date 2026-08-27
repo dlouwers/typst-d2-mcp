@@ -161,16 +161,41 @@ func namespaceForPublish(ctx context.Context, store *authdb.Store, id identity.I
 	}
 	nsID, ok := allowed[name]
 	if !ok {
-		return "", fmt.Errorf("you cannot see a namespace called @%s — call list_templates to see yours", name)
+		// Name what they CAN publish to. Pointing at list_templates was
+		// worse than useless while it listed only packages: a caller
+		// with an empty namespace saw nothing of theirs and concluded
+		// they had none (#108).
+		return "", fmt.Errorf("you cannot see a namespace called @%s.%s",
+			name, ownedNamespacesHint(ctx, store, id))
 	}
 	role, err := store.RoleFor(ctx, nsID, id.UserID)
 	if err != nil {
 		return "", fmt.Errorf("check ownership: %w", err)
 	}
 	if role != authdb.RoleOwner {
-		return "", fmt.Errorf("you are a member of @%s but not an owner, so you cannot publish to it", name)
+		return "", fmt.Errorf("you are a member of @%s but not an owner, so you cannot publish to it.%s",
+			name, ownedNamespacesHint(ctx, store, id))
 	}
 	return nsID, nil
+}
+
+// ownedNamespacesHint names the namespaces the caller may publish to,
+// so a refusal carries its own remedy.
+func ownedNamespacesHint(ctx context.Context, store *authdb.Store, id identity.Identity) string {
+	allowed, err := allowedNamespaces(ctx, store, id)
+	if err != nil {
+		return ""
+	}
+	var owned []string
+	for _, name := range sortedNames(allowed) {
+		if name != builtinNamespace && ownsNamespace(ctx, store, id, allowed[name]) {
+			owned = append(owned, "@"+name)
+		}
+	}
+	if len(owned) == 0 {
+		return " You own no namespace to publish to."
+	}
+	return " You can publish to: " + strings.Join(owned, ", ") + "."
 }
 
 // collectPackage lists the package's files, relative to its root.
