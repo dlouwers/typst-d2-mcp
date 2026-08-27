@@ -153,15 +153,25 @@ func TestExportedNames(t *testing.T) {
 	if err := os.WriteFile(lib, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := exportedNames(lib)
+	got := exportNames(parseExports(lib))
 	if want := []string{"adr", "report"}; !equalStrings(got, want) {
-		t.Errorf("exportedNames = %v, want %v (underscored internals are not exports)", got, want)
+		t.Errorf("parseExports = %v, want %v (underscored internals are not exports)", got, want)
 	}
 }
 
+// exportNames is a test helper: the listing reports signatures now, but
+// plenty of assertions only care which exports appeared.
+func exportNames(exports []exportEntry) []string {
+	var out []string
+	for _, e := range exports {
+		out = append(out, e.Name)
+	}
+	return out
+}
+
 func TestExportedNames_MissingFileIsEmpty(t *testing.T) {
-	if got := exportedNames(filepath.Join(t.TempDir(), "nope.typ")); got != nil {
-		t.Errorf("exportedNames on a missing file = %v, want nil", got)
+	if got := parseExports(filepath.Join(t.TempDir(), "nope.typ")); got != nil {
+		t.Errorf("parseExports on a missing file = %v, want nil", got)
 	}
 }
 
@@ -176,7 +186,7 @@ func TestListTemplates_RealHouseTemplateExports(t *testing.T) {
 	if len(got.Templates) != 1 {
 		t.Fatalf("got %d templates, want 1", len(got.Templates))
 	}
-	if want := []string{"adr", "report"}; !equalStrings(got.Templates[0].Exports, want) {
+	if want := []string{"adr", "report"}; !equalStrings(exportNames(got.Templates[0].Exports), want) {
 		t.Errorf("exports = %v, want %v", got.Templates[0].Exports, want)
 	}
 }

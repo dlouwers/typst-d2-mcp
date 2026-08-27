@@ -132,6 +132,39 @@ that `_`- and `.`-prefixed entries are not silently dropped; a bare
 `//go:embed` skips them, which would build cleanly and fail at a user's
 compile.
 
+### How a template describes itself
+
+`list_templates` reports each export's full signature — every parameter,
+its default, and whether the export ends in a positional `body` (which
+is what makes it applicable with `#show:`). All of it is parsed from the
+`lib.typ` that typst itself resolves, so a listing cannot describe a
+version other than the one a caller imports.
+
+This matters most for a template you publish rather than one shipped
+here. Before it existed, a caller who found `@acme/templates` could see
+that `update` was an export and had no way to learn what it took: the
+only route was to write a probe document, compile it, and read the
+argument names out of the error — a wasted compile against a metered
+server, and one that only works at all when an argument is *required*.
+A template whose arguments all have defaults compiles silently and
+tells the caller nothing.
+
+Two things follow for a template author:
+
+- **Parameter names are the interface.** They are what a caller reads
+  and copies, so `background:` beats `bg:`, and a rename is a breaking
+  change even though nothing in typst says so.
+- **A `///` comment above a `#let` is carried into the listing.** Use it
+  to say what an argument *means*, which a signature cannot — `adr` uses
+  it to explain why its first section is `background:` and not
+  `context:` (`context` is a reserved word in Typst). A plain `//`
+  comment is not documentation and stays where you wrote it.
+
+```typ
+/// A memo. Short by design: if it needs sections, write a report.
+#let memo(title: "Untitled", cc: none, body) = { ... }
+```
+
 ### The one styling argument
 
 `report` and `adr` both take `numbering:`, defaulting to `none`. It

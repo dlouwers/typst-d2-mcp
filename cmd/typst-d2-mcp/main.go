@@ -391,8 +391,10 @@ func templateInstructions() string {
   CALL list_templates FIRST. Which templates you can import depends on
   who you are — the house ones below are available to everyone, and an
   organisation you belong to may publish its own. list_templates
-  returns the exact import string and what each package exports; this
-  section can only describe the built-in ones.
+  returns the exact import string, and for every export its full
+  signature — so a template someone else published is as callable as
+  the built-in ones described below, without compiling a probe to find
+  out what it takes.
 
   If the look someone wants does not exist yet, write it once and
   publish_template it into your own namespace rather than restyling
@@ -1123,7 +1125,12 @@ No arguments; returns JSON:
     with publish_template — normally your own. This is where you find
     your own namespace's name; do not guess it.
   - templates[]: namespace, name, version, and the exact "import" string
-    to use, plus "exports" — the functions that package offers.
+    to use, plus "exports" — what that package offers AND how to call
+    it. Each export carries a "signature", its parameters with their
+    defaults, "template": true when it takes a trailing body (so it is
+    applied with #show: rather than called), and the author's "doc" if
+    they wrote one. You do not need to compile anything to find out what
+    arguments a template takes; it is in the listing.
   - builtin: true for the server's house templates, available to
     everyone. Others come from organisations you belong to.
   - note: present only when nothing is available to you.
