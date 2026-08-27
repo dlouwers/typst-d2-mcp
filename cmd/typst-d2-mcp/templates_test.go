@@ -91,6 +91,28 @@ Trailing content.
 #show: report.with(title: "Minimal")
 = Only a title
 `,
+		// #112: @ref to a heading is impossible in typst without
+		// numbering, and the compiler's own hint is the restyling these
+		// templates forbid. The argument exists so a caller need not
+		// choose between a broken reference and opting out.
+		"report with heading cross-references": `#import "@house/templates:0.1.0": report
+#show: report.with(title: "Cross-referenced", numbering: "1.")
+= Overview <intro>
+== Detail
+See @intro and @intro again.
+`,
+		"adr with heading cross-references": `#import "@house/templates:0.1.0": adr
+#show: adr.with(
+  title: "A decision",
+  number: 2,
+  background: [Why.],
+  decision: [What.],
+  consequences: [So what.],
+  numbering: "1.",
+)
+== Appendix <extra>
+See @extra.
+`,
 	}
 
 	for name, src := range cases {
@@ -216,4 +238,66 @@ func TestSeedBundledTemplates_Compiles(t *testing.T) {
 	if info, err := os.Stat(out); err != nil || info.Size() == 0 {
 		t.Errorf("no PDF produced from seeded package: %v", err)
 	}
+}
+
+// The argument is bounded: it decides whether headings are numbered and
+// nothing else. A default-argument document must look exactly as it did
+// before the argument existed — otherwise this would have been the
+// "enable numbering outright" option wearing a parameter.
+func TestHouseTemplates_NumberingDefaultsToUnchanged(t *testing.T) {
+	if _, err := exec.LookPath("typst"); err != nil {
+		t.Skip("typst not installed")
+	}
+	staged := stageHousePackage(t)
+
+	render := func(src string) string {
+		dir := t.TempDir()
+		in := filepath.Join(dir, "doc.typ")
+		out := filepath.Join(dir, "doc.txt")
+		if err := os.WriteFile(in, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("typst", "compile", "--format", "html", "--features", "html", in, out)
+		cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+staged)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("html export unavailable: %s", b)
+		}
+		raw, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	plain := render(`#import "@house/templates:0.1.0": report
+#show: report.with(title: "T")
+= Overview
+`)
+	if strings.Contains(plain, "1. Overview") || strings.Contains(plain, "1.Overview") {
+		t.Errorf("the default gained heading numbers:\n%s", plain)
+	}
+
+	numbered := render(`#import "@house/templates:0.1.0": report
+#show: report.with(title: "T", numbering: "1.")
+= Overview
+`)
+	if !strings.Contains(numbered, "Overview") {
+		t.Errorf("numbered render lost the heading:\n%s", numbered)
+	}
+}
+
+// stageHousePackage puts the repo's template tree where typst looks for
+// a local package, and returns the XDG_DATA_HOME to use.
+func stageHousePackage(t *testing.T) string {
+	t.Helper()
+	staged := t.TempDir()
+	pkgRoot := filepath.Join(staged, "typst", "packages")
+	if err := os.MkdirAll(pkgRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(repoTemplates(t), templateNamespace),
+		filepath.Join(pkgRoot, templateNamespace)); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	return staged
 }

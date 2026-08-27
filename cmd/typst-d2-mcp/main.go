@@ -428,9 +428,19 @@ func templateInstructions() string {
   Note "background", not "context": context is a reserved word in Typst.
   The rendered heading still reads "Context".
 
+  To cross-reference a heading with @label, pass numbering: "1." —
+  typst cannot reference an unnumbered heading, and its own suggested
+  fix (#set heading(numbering: ...)) is the restyling you must not do.
+
+    #show: report.with(title: "...", numbering: "1.")
+    = Overview <intro>
+    See @intro.
+
   Do not override the template's fonts, colours or page setup. A
   document that restyles itself has opted out of the house style, which
-  is the one thing these templates exist to prevent.
+  is the one thing these templates exist to prevent. numbering: is the
+  single exception, and it is bounded: it decides whether headings are
+  numbered and nothing else.
 
 `,
 		templateNamespace, templateName, templateVersion)
