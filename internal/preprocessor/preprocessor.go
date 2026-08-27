@@ -55,8 +55,18 @@ func Preprocess(ctx context.Context, r workspace.Resolver, inputPath string) (st
 	}
 	content := string(contentBytes)
 
-	// Remove old lib.typ imports
-	content = regexp.MustCompile(`#import\s+["'].*?lib\.typ["'].*?\n`).ReplaceAllString(content, "")
+	// A line importing anything named lib.typ used to be deleted here,
+	// left over from when this preprocessor injected its own library.
+	// It matched ANY path ending in lib.typ, so a caller's own
+	// `#import "lib.typ"` vanished during staging — silently, with the
+	// resulting "unknown variable" pointing at a line number that no
+	// longer matched their file. An agent lost three tool calls to it
+	// and abandoned local testing entirely.
+	//
+	// Nothing needs the removal: the injected import is @preview/based,
+	// added below and idempotent, and #91 made a relative import of a
+	// workspace file resolve properly — so this was deleting code that
+	// now works.
 
 	// Find all D2 calls
 	d2Blocks, skipped := extractD2Calls(content)

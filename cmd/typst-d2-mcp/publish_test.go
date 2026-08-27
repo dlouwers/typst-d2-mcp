@@ -522,3 +522,46 @@ func TestPublish_NewVersionCanBuildOnAnOlderOne(t *testing.T) {
 			resultText(res))
 	}
 }
+
+// Rendered pages live in a hidden directory beside the source. Sweeping
+// them into a package shipped 86.8 KiB of PNGs in a package that should
+// have held two files — and since versions are immutable, that mistake
+// is permanent and shows in list_templates forever.
+func TestPublish_ExcludesHiddenDirectories(t *testing.T) {
+	f := newPublishFixture(t)
+	f.stage(t, "tpl", map[string]string{
+		"typst.toml":               goodTOML,
+		"lib.typ":                  goodLib,
+		".previews/tpl/page-1.png": "not a real png",
+		".previews/tpl/page-2.png": "nor this",
+		".hidden-note":             "should not ship",
+	})
+
+	res := f.publish(t, "tpl", f.nsName, "1.0.0")
+	if res.IsError {
+		t.Fatalf("publish failed: %s", resultText(res))
+	}
+	// The result lists what it shipped, so a caller can see a mistake
+	// before it becomes permanent.
+	msg := resultText(res)
+	if !strings.Contains(msg, "Files shipped") {
+		t.Errorf("the publish result does not say what it shipped:\n%s", msg)
+	}
+	if strings.Contains(msg, "previews") || strings.Contains(msg, ".hidden") {
+		t.Errorf("a hidden file was shipped:\n%s", msg)
+	}
+
+	nsID, _ := f.store.ResolveName(t.Context(), f.nsName)
+	dest := filepath.Join(f.data, "typst", "packages", nsID, "templates", "1.0.0")
+	var shipped []string
+	_ = filepath.WalkDir(dest, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(dest, p)
+			shipped = append(shipped, rel)
+		}
+		return nil
+	})
+	if len(shipped) != 2 {
+		t.Errorf("shipped %v, want exactly typst.toml and lib.typ", shipped)
+	}
+}

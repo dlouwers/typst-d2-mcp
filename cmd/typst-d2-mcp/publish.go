@@ -141,8 +141,13 @@ func handlePublishTemplate(factory workspace.Factory, store *authdb.Store) serve
 			return mcp.NewToolResultErrorFromErr("install package", err), nil
 		}
 
-		msg := fmt.Sprintf("Published @%s/%s:%s (%s, %d file(s)).\n\nImport it with:\n  #import \"@%s/%s:%s\": …\n",
-			namespace, pkgName, version, humanBytes(total), len(files), namespace, pkgName, version)
+		msg := fmt.Sprintf("Published @%s/%s:%s (%s).\n\nFiles shipped:\n",
+			namespace, pkgName, version, humanBytes(total))
+		for _, f := range files {
+			msg += "  " + f + "\n"
+		}
+		msg += fmt.Sprintf("\nImport it with:\n  #import \"@%s/%s:%s\": …\n",
+			namespace, pkgName, version)
 		msg += "\nThis version is now immutable. Publish a new version to change it; " +
 			"documents importing this one keep rendering the same way."
 		return mcp.NewToolResultText(msg), nil
@@ -206,12 +211,19 @@ func collectPackage(dir string) ([]string, int64, error) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
+		// Skip anything the server staged, and anything hidden. A
+		// compile in the source directory leaves a staged file; reading
+		// a page leaves a .previews/ directory. One publish swept 86.8
+		// KiB of rendered PNGs into a package that should have held two
+		// files — and since versions are immutable, that mistake is
+		// permanent and shows in list_templates forever.
+		if strings.HasPrefix(d.Name(), workspace.StagePrefix) || strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		// Skip anything the server staged: a compile in the same
-		// directory would otherwise get published along with it.
-		if strings.HasPrefix(d.Name(), workspace.StagePrefix) {
+		if d.IsDir() {
 			return nil
 		}
 		info, infoErr := d.Info()
