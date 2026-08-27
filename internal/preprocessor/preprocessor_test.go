@@ -3,6 +3,7 @@ package preprocessor
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -343,5 +344,31 @@ func TestLineCol(t *testing.T) {
 		if line != tc.line || col != tc.col {
 			t.Errorf("lineCol(%d) = %d:%d, want %d:%d", tc.offset, line, col, tc.line, tc.col)
 		}
+	}
+}
+
+// #110: a failing diagram must be named by its position in the
+// document, not by where a reverse loop happened to reach it. An agent
+// was told "failed to render diagram 3" when its FIRST diagram was the
+// fault, and went hunting through the third.
+func TestPreprocess_NamesTheDiagramThatFailed(t *testing.T) {
+	if _, err := exec.LookPath("d2"); err != nil {
+		t.Skip("d2 not installed")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.typ")
+
+	// The first diagram is broken; the other two are fine.
+	content := "#d2[\n  a -> ->\n]\n\n#d2[\n  b -> c\n]\n\n#d2[\n  d -> e\n]\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Preprocess(context.Background(), workspace.LocalFS{}, path)
+	if err == nil {
+		t.Fatal("expected the broken diagram to fail")
+	}
+	if !strings.Contains(err.Error(), "diagram 1 of 3") {
+		t.Errorf("error names the wrong diagram: %v", err)
 	}
 }

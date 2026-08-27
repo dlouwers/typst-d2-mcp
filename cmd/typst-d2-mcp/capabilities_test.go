@@ -345,3 +345,75 @@ func findSystemFont(t *testing.T) string {
 	}
 	return best
 }
+
+// #110: an absent binary must be reported as absent. Omitting the field
+// made a server that could not render a single diagram look healthy —
+// an agent wrote a whole document with diagrams before finding out.
+func TestToolVersions_ReportsAMissingBinary(t *testing.T) {
+	if got := probeVersion("a-binary-that-does-not-exist"); got != missingBinary {
+		t.Errorf("probeVersion(missing) = %q, want %q", got, missingBinary)
+	}
+	if _, err := exec.LookPath("typst"); err == nil {
+		if got := probeVersion("typst"); got == missingBinary || got == "" {
+			t.Errorf("probeVersion(typst) = %q, want a version", got)
+		}
+	}
+}
+
+// The page count answers the question every agent asked next.
+func TestPDFPageCount(t *testing.T) {
+	requireTypst(t)
+	dir := t.TempDir()
+
+	for _, tc := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"one page", "= One\nBody.\n", 1},
+		{"three pages", "= One\n#pagebreak()\n= Two\n#pagebreak()\n= Three\n", 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := filepath.Join(dir, tc.name+".typ")
+			out := filepath.Join(dir, tc.name+".pdf")
+			if err := os.WriteFile(in, []byte(tc.src), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if outBytes, err := exec.Command("typst", "compile", in, out).CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, outBytes)
+			}
+			if got := pdfPageCount(out); got != tc.want {
+				t.Errorf("pdfPageCount = %d, want %d", got, tc.want)
+			}
+		})
+	}
+
+	// A missing or unreadable file must not fail a compile.
+	if got := pdfPageCount(filepath.Join(dir, "nope.pdf")); got != 0 {
+		t.Errorf("pdfPageCount(missing) = %d, want 0", got)
+	}
+}
+
+// #109 and #110: the result tells you where the output is and how long
+// it is, and only mentions diagrams when there are diagrams.
+func TestCompileResult_LocatesOutputAndOmitsIrrelevantAdvice(t *testing.T) {
+	requireTypst(t)
+	root := t.TempDir()
+	factory := workspace.TenantFactory{Root: root}
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "gh:4242"})
+
+	if res := putFile(t, ctx, factory, "plain.typ", "= Title\n#pagebreak()\n= Second\n"); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	got := resultText(compile(t, ctx, factory, "plain.typ"))
+
+	if !strings.Contains(got, "2 page(s)") {
+		t.Errorf("result does not report the page count:\n%s", got)
+	}
+	if !strings.Contains(got, "resources/read") {
+		t.Errorf("result does not say how to fetch the PDF:\n%s", got)
+	}
+	if strings.Contains(got, "direction: down") {
+		t.Errorf("diagram advice on a document with no diagrams:\n%s", got)
+	}
+}
