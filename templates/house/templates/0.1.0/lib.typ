@@ -55,14 +55,21 @@
   set text(size: 10.5pt, lang: "en")
   set par(justify: true, leading: 0.7em)
 
-  show heading.where(level: 1): it => block(
-    above: 1.6em, below: 0.8em,
-    text(size: 15pt, weight: 700, fill: _accent, it.body),
+  // The number is printed, not just counted. Rendering `it.body` alone
+  // meant `numbering:` enabled @label references that resolved to
+  // "Section 8" on a page where nothing was numbered 8 — a document
+  // that compiled cleanly and read as nonsense. An agent caught it by
+  // looking at the rasterised page; the compiler was perfectly happy.
+  let _numbered(it, size, weight, colour) = block(
+    above: if it.level == 1 { 1.6em } else { 1.2em },
+    below: if it.level == 1 { 0.8em } else { 0.6em },
+    text(size: size, weight: weight, fill: colour)[
+      #if it.numbering != none [#counter(heading).display(it.numbering) #h(0.35em)]
+      #it.body
+    ],
   )
-  show heading.where(level: 2): it => block(
-    above: 1.2em, below: 0.6em,
-    text(size: 12pt, weight: 600, it.body),
-  )
+  show heading.where(level: 1): it => _numbered(it, 15pt, 700, _accent)
+  show heading.where(level: 2): it => _numbered(it, 12pt, 600, black)
   show link: it => text(fill: _accent, it)
   show raw.where(block: false): it => box(
     fill: luma(240), inset: (x: 3pt), outset: (y: 3pt), radius: 2pt, it,

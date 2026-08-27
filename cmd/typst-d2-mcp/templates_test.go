@@ -301,3 +301,45 @@ func stageHousePackage(t *testing.T) string {
 	}
 	return staged
 }
+
+// numbering: must PRINT the numbers it lets you reference. Rendering
+// only the heading body meant @label resolved to "Section 8" on a page
+// where nothing was numbered 8 — a document that compiled cleanly and
+// read as nonsense.
+func TestHouseTemplates_NumberedHeadingsShowTheirNumbers(t *testing.T) {
+	if _, err := exec.LookPath("typst"); err != nil {
+		t.Skip("typst not installed")
+	}
+	staged := stageHousePackage(t)
+	dir := t.TempDir()
+	in := filepath.Join(dir, "doc.typ")
+	out := filepath.Join(dir, "doc.html")
+	src := `#import "@house/templates:0.1.0": report
+#show: report.with(title: "T", numbering: "1.")
+= Alpha <a>
+= Beta
+See @a.
+`
+	if err := os.WriteFile(in, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("typst", "compile", "--format", "html", "--features", "html", in, out)
+	cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+staged)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("html export unavailable: %s", b)
+	}
+	raw, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+
+	// The reference resolves to a number, so that number must appear on
+	// the heading it points at.
+	if !strings.Contains(body, "1.") {
+		t.Errorf("numbered headings do not show a number:\n%s", body)
+	}
+	if strings.Contains(body, "Section") && !strings.Contains(body, "1.") {
+		t.Errorf("a reference names a number the document never prints:\n%s", body)
+	}
+}

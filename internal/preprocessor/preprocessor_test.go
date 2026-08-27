@@ -372,3 +372,27 @@ func TestPreprocess_NamesTheDiagramThatFailed(t *testing.T) {
 		t.Errorf("error names the wrong diagram: %v", err)
 	}
 }
+
+// A caller's own `#import "lib.typ"` must survive preprocessing. The
+// line used to be deleted outright — leftover from when this package
+// injected its own library — so a workspace file called lib.typ became
+// invisible and the compile failed with "unknown variable" at a line
+// number that no longer matched the source.
+func TestPreprocess_KeepsTheCallersOwnLibImport(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "doc.typ")
+	content := "#import \"lib.typ\": accent\n#import \"helpers/lib.typ\": other\n= Title\nBody.\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Preprocess(context.Background(), workspace.LocalFS{}, path)
+	if err != nil {
+		t.Fatalf("preprocess: %v", err)
+	}
+	for _, want := range []string{`#import "lib.typ": accent`, `#import "helpers/lib.typ": other`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("preprocessing removed the caller's import %q:\n%s", want, got)
+		}
+	}
+}
