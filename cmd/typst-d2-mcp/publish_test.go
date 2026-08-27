@@ -442,3 +442,83 @@ func TestLetDeclarations_MultilineAndNested(t *testing.T) {
 		}
 	}
 }
+
+// #115: the check compiles against everything the caller could import,
+// not the candidate alone. Building on the house style is the
+// encouraged thing to do, and staging the candidate by itself rejected
+// exactly those templates with "package not found".
+func TestPublish_TemplateBuiltOnTheHouseStyle(t *testing.T) {
+	f := newPublishFixture(t)
+	seedBundledTemplates() // the house package, as a real server has it
+
+	lib := "#import \"@house/templates:0.1.0\": report\n" +
+		"#let incident(title: \"Untitled\", body) = {\n" +
+		"  show: report.with(title: title)\n  body\n}\n"
+	f.stage(t, "tpl", map[string]string{
+		"typst.toml": "[package]\nname = \"templates\"\nversion = \"1.0.0\"\nentrypoint = \"lib.typ\"\n",
+		"lib.typ":    lib,
+	})
+
+	res := f.publish(t, "tpl", f.nsName, "1.0.0")
+	if res.IsError {
+		t.Fatalf("a template built on the house style was refused:\n%s", resultText(res))
+	}
+}
+
+// A namespace the publisher cannot see must still be unreachable from
+// inside the check — widening what it resolves must not widen that.
+func TestPublish_CheckCannotReachAnotherTenantsNamespace(t *testing.T) {
+	f := newPublishFixture(t)
+
+	// Another tenant publishes something.
+	other := seedUser(t, f.store, "stranger", 77)
+	otherNS, err := f.store.EnsurePersonalNamespace(t.Context(), other.UserID, 77)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePackage(t, f.data, otherNS, "1.0.0")
+	strangerName := authdb.DerivedName(77)
+
+	f.stage(t, "tpl", map[string]string{
+		"typst.toml": goodTOML,
+		"lib.typ": "#import \"@" + strangerName + "/templates:1.0.0\": mark\n" +
+			"#let report(body) = { mark(); body }\n",
+	})
+
+	res := f.publish(t, "tpl", f.nsName, "1.0.0")
+	if !res.IsError {
+		t.Fatal("the check resolved a namespace the publisher cannot see")
+	}
+}
+
+// A new version may build on an older one in the same namespace.
+func TestPublish_NewVersionCanBuildOnAnOlderOne(t *testing.T) {
+	f := newPublishFixture(t)
+
+	f.stage(t, "base", map[string]string{
+		"typst.toml": "[package]\nname = \"base\"\nversion = \"1.0.0\"\nentrypoint = \"lib.typ\"\n",
+		"lib.typ":    "#let accent = rgb(\"#006566\")\n",
+	})
+	req := mcp.CallToolRequest{}
+	req.Params.Name = "publish_template"
+	req.Params.Arguments = map[string]any{
+		"source": "base", "namespace": f.nsName, "version": "1.0.0", "name": "base",
+	}
+	res, err := handlePublishTemplate(f.factory, f.store)(f.ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("publishing the base package: %s", resultText(res))
+	}
+
+	f.stage(t, "tpl", map[string]string{
+		"typst.toml": goodTOML,
+		"lib.typ": "#import \"@" + f.nsName + "/base:1.0.0\": accent\n" +
+			"#let report(body) = { text(fill: accent, body) }\n",
+	})
+	if res := f.publish(t, "tpl", f.nsName, "1.0.0"); res.IsError {
+		t.Fatalf("a template building on an earlier package in its own namespace was refused:\n%s",
+			resultText(res))
+	}
+}

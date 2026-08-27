@@ -131,7 +131,8 @@ func handlePublishTemplate(factory workspace.Factory, store *authdb.Store) serve
 				namespace, pkgName, version)), nil
 		}
 
-		if err := compileCheck(ctx, srcDir, files, nsID, pkgName, version); err != nil {
+		if err := compileCheck(ctx, store, id, srcDir, files,
+			namespace, nsID, pkgName, version); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf(
 				"the template did not compile, so it was not published:\n\n%s", err.Error())), nil
 		}
@@ -224,15 +225,63 @@ func containsFile(files []string, want string) bool {
 // The check runs in the same shape as a real compile — the package
 // reached only through XDG_DATA_HOME — so a template that resolves here
 // resolves for everyone importing it later.
-func compileCheck(ctx context.Context, srcDir string, files []string, nsID, pkgName, version string) error {
+func compileCheck(
+	ctx context.Context,
+	store *authdb.Store,
+	id identity.Identity,
+	srcDir string,
+	files []string,
+	nsName, nsID, pkgName, version string,
+) error {
 	stage, err := os.MkdirTemp("", "typst-d2-publish-*")
 	if err != nil {
 		return fmt.Errorf("stage package: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(stage) }()
 
-	pkgRoot := filepath.Join(stage, "data", "typst", "packages", nsID, pkgName, version)
-	if err := installPackage(srcDir, files, pkgRoot); err != nil {
+	// The check compiles against everything this caller could import,
+	// not against the candidate alone.
+	//
+	// Staging the candidate by itself rejected templates that build on
+	// another one — including the house style, which the instructions
+	// tell people to prefer — with "package not found". A gate that
+	// refuses correct work is worse than no gate: the caller is told
+	// their template is broken and the obvious remedy does not help
+	// (#115). Reusing the same view a real compile gets also removes a
+	// discrepancy nobody had declared, between what the check sees and
+	// what the document will see.
+	allowed, err := allowedNamespaces(ctx, store, id)
+	if err != nil {
+		return fmt.Errorf("resolve namespaces for the check: %w", err)
+	}
+	view, cleanupView, err := packageView(typstDataDir(), allowed)
+	if err != nil {
+		return fmt.Errorf("stage package: %w", err)
+	}
+	defer cleanupView()
+
+	// The candidate has to be a real directory under its own namespace
+	// name, replacing the symlink to the published store — otherwise
+	// installing it would write into the live store before it has
+	// passed.
+	pkgsDir := filepath.Join(view, "typst", "packages")
+	nsDir := filepath.Join(pkgsDir, nsName)
+	published := filepath.Join(typstDataDir(), "typst", "packages", nsID)
+	_ = os.Remove(nsDir) // drop the symlink, if the namespace has one
+	if err := os.MkdirAll(nsDir, 0o755); err != nil {
+		return fmt.Errorf("stage package: %w", err)
+	}
+	// Keep the namespace's already-published packages reachable, so a
+	// new version can build on an older one.
+	if entries, readErr := os.ReadDir(published); readErr == nil {
+		for _, e := range entries {
+			if e.Name() == pkgName {
+				continue // the candidate supersedes it for this check
+			}
+			_ = os.Symlink(filepath.Join(published, e.Name()), filepath.Join(nsDir, e.Name()))
+		}
+	}
+	if err := installPackage(srcDir, files, filepath.Join(nsDir, pkgName, version)); err != nil {
 		return fmt.Errorf("stage package: %w", err)
 	}
 
@@ -241,15 +290,14 @@ func compileCheck(ctx context.Context, srcDir string, files []string, nsID, pkgN
 		return fmt.Errorf("stage package: %w", err)
 	}
 
-	importPath := fmt.Sprintf("@%s/%s:%s", nsID, pkgName, version)
-	dataHome := filepath.Join(stage, "data")
+	importPath := fmt.Sprintf("@%s/%s:%s", nsName, pkgName, version)
 
 	// The gate: the package imports and a document using it compiles.
 	// This is what catches the failures that actually reach users — a
 	// syntax error, a missing asset, a typst.toml that does not match
 	// the directory it sits in.
 	doc := fmt.Sprintf("#import %q: *\n= Compile check\nBody text.\n", importPath)
-	if out, err := runTypst(ctx, work, dataHome, "check.typ", doc); err != nil {
+	if out, err := runTypst(ctx, work, view, "check.typ", doc); err != nil {
 		return errors.New(out)
 	}
 
@@ -269,7 +317,7 @@ func compileCheck(ctx context.Context, srcDir string, files []string, nsID, pkgN
 	for _, name := range documentTemplateExports(filepath.Join(srcDir, "lib.typ")) {
 		showDoc := fmt.Sprintf("#import %q: %s\n#show: %s.with()\n= Heading\nBody.\n",
 			importPath, name, name)
-		if out, err := runTypst(ctx, work, dataHome, "show-"+name+".typ", showDoc); err != nil {
+		if out, err := runTypst(ctx, work, view, "show-"+name+".typ", showDoc); err != nil {
 			return fmt.Errorf(
 				"%s is a document template but fails when applied to a document with its "+
 					"default arguments:\n\n%s", name, out)
@@ -436,7 +484,12 @@ func runTypst(ctx context.Context, workDir, dataHome, file, content string) (str
 		return "", err
 	}
 	out := strings.TrimSuffix(in, ".typ") + ".pdf"
-	cmd := exec.CommandContext(ctx, "typst", "compile", in, out)
+	// The check must see fonts the way a real compile does: a template
+	// may ship the typeface it is designed in, and validating it
+	// without that would reject it for a font it actually carries.
+	// Same discrepancy as #115, one axis over.
+	cmd := exec.CommandContext(ctx, "typst", "compile",
+		"--font-path", dataHome, in, out)
 	cmd.Env = compileEnv(dataHome)
 	combined, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(combined)), err
