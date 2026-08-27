@@ -179,7 +179,7 @@ func TestPageResource_RendersADocumentUsingAnOrgTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := seedUser(t, store, "member", 21)
-	if err := store.AddOrgMember(t.Context(), "admin", "acme", "member"); err != nil {
+	if err := store.AddOrgMember(t.Context(), "admin", "acme", "member", authdb.RoleMember); err != nil {
 		t.Fatal(err)
 	}
 	nsID, err := store.ResolveName(t.Context(), "acme")

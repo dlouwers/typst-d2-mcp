@@ -1,7 +1,13 @@
 import { test, expect } from "@playwright/test";
 import { APP_ORIGIN } from "../playwright.config";
 import { signIn } from "../helpers/session";
-import { countInvites, countUsers, quotaFor, seedSignedInUser } from "../helpers/db";
+import {
+  countInvites,
+  countUsers,
+  quotaFor,
+  seedSignedInUser,
+  orgMemberRole,
+} from "../helpers/db";
 
 // The admin UI is supposed to work with JavaScript unavailable: the
 // forms are ordinary POSTs, the handlers redirect with a banner instead
@@ -52,6 +58,35 @@ test.describe("without javascript", () => {
 
     await expect(page.locator("#flash")).toContainText("Quota updated");
     expect(quotaFor("nojsquota")).toBe("0");
+  });
+
+  // Ownership is the only route to a publishable organisation namespace,
+  // so the buttons that grant it must not be the one part of the admin
+  // UI that needs script.
+  test("ownership can be granted and the last owner protected without script", async ({
+    page,
+  }) => {
+    seedSignedInUser(5260, "nojsowner");
+    await page.goto(`${APP_ORIGIN}/admin/orgs`);
+    await page.fill('form[action="/admin/orgs/create"] input[name="slug"]', "nojsorg");
+    await page.click('form[action="/admin/orgs/create"] button[type="submit"]');
+
+    const card = () => page.locator("sl-card.org", { hasText: "@nojsorg" });
+    await card().locator('form[action="/admin/orgs/members/add"] input[name="login"]').fill("nojsowner");
+    await card().getByRole("button", { name: "Add" }).click();
+    expect(orgMemberRole("nojsorg", "nojsowner")).toBe("member");
+
+    await card().getByRole("button", { name: "Make owner" }).click();
+    await expect(page).toHaveURL(/\/admin\/orgs\?flash=/);
+    await expect(page.locator("#flash")).toContainText("is now an owner");
+    expect(orgMemberRole("nojsorg", "nojsowner")).toBe("owner");
+
+    await card().getByRole("button", { name: "Make member" }).click();
+    await expect(page.locator("#flash")).toContainText("only owner");
+    expect(orgMemberRole("nojsorg", "nojsowner")).toBe("owner");
+
+    await card().getByRole("button", { name: "Delete" }).click();
+    await expect(page.locator("#orgs")).not.toContainText("@nojsorg");
   });
 
   test("delete still enforces the typed confirmation", async ({ page }) => {

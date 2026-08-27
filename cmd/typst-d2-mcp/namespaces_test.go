@@ -96,7 +96,7 @@ func TestAllowedNamespaces_MembershipDecides(t *testing.T) {
 	}
 	member := seedUser(t, store, "member", 1)
 	outsider := seedUser(t, store, "outsider", 2)
-	if err := store.AddOrgMember(ctx, "admin", "acme", "member"); err != nil {
+	if err := store.AddOrgMember(ctx, "admin", "acme", "member", authdb.RoleMember); err != nil {
 		t.Fatal(err)
 	}
 
@@ -346,7 +346,7 @@ func TestCompile_OrgTemplateAssetResolves(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := seedUser(t, store, "member", 1)
-	if err := store.AddOrgMember(t.Context(), "admin", "acme", "member"); err != nil {
+	if err := store.AddOrgMember(t.Context(), "admin", "acme", "member", authdb.RoleMember); err != nil {
 		t.Fatal(err)
 	}
 	nsID, err := store.ResolveName(t.Context(), "acme")

@@ -128,3 +128,18 @@ export function orgMemberCount(slug: string): number {
     ).trim(),
   );
 }
+
+/**
+ * A member's role in a namespace, addressed by NAME, or '' when they are
+ * not a member. Ownership is what grants publishing, so this is the
+ * column that decides whether an organisation is usable at all.
+ */
+export function orgMemberRole(slug: string, login: string): string {
+  return sql(
+    `SELECT m.role
+       FROM namespace_members m
+       JOIN namespace_names nn ON nn.namespace_id = m.namespace_id
+       JOIN users u ON 'gh:' || u.github_id = m.user_id
+      WHERE nn.name = '${slug}' AND u.github_login = '${login}'`,
+  ).trim();
+}
