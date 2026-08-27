@@ -1094,10 +1094,10 @@ No arguments; returns JSON:
     remaining space, present only when a budget is configured (absent =
     no cap). A put_file over available_bytes is rejected.
   - typst_version / d2_version: the binaries this server actually runs.
-  - font_families: every font family a compile can resolve, including
-    any you have pushed. Typst SUBSTITUTES an unknown family silently
-    and still exits 0, so a document naming one produces a PDF that
-    looks fine and is wrong — check this list before setting a font.
+  - font_families_available: how many families you can use. Call
+    search_fonts to find one by name — typst SUBSTITUTES an unknown
+    family silently and still exits 0, so a document naming one
+    produces a PDF that looks fine and is wrong.
   - fonts_dir: push .ttf/.otf files here (via put_file) to use your own
     typefaces; they are visible only to your workspace. Present only
     where the workspace is bounded.
@@ -1229,6 +1229,26 @@ is taking up your byte budget before deleting anything.`),
 			mcp.Description("Text that must appear inside the file. Text files only.")),
 	)
 	s.AddTool(searchFileTool, handleSearchFile(factory))
+
+	searchFontsTool := mcp.NewTool("search_fonts",
+		mcp.WithDescription(`Find a typeface you can actually use.
+
+CHECK HERE BEFORE SETTING A FONT. typst substitutes an unknown family
+silently and still exits 0, so a document naming one renders fine and is
+wrong — and nothing downstream tells you.
+
+  query   part of a family name ("garamond", "mono"); omit for everything
+
+Every family returned resolves in a compile by you. Fonts come from four
+places and this searches all of them: the collection shipped with this
+server, your workspace fonts/ directory, the fonts inside any template
+you can import, and the faces built into typst.
+
+To use your own: put_file the .ttf/.otf into fonts/ and it appears here.`),
+		mcp.WithString("query",
+			mcp.Description("Part of a family name, case-insensitive. Omit to list everything.")),
+	)
+	s.AddTool(searchFontsTool, handleSearchFonts(factory, store))
 }
 
 func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.ToolHandlerFunc {
@@ -1735,10 +1755,10 @@ type workspaceInfo struct {
 	// spending a compile on a probe document — and typst substitutes a
 	// missing font silently, so the probe was the only way to find out
 	// at all.
-	TypstVersion string   `json:"typst_version,omitempty"`
-	D2Version    string   `json:"d2_version,omitempty"`
-	FontFamilies []string `json:"font_families,omitempty"`
-	FontsDir     string   `json:"fonts_dir,omitempty"`
+	TypstVersion string `json:"typst_version,omitempty"`
+	D2Version    string `json:"d2_version,omitempty"`
+	FontCount    int    `json:"font_families_available,omitempty"`
+	FontsDir     string `json:"fonts_dir,omitempty"`
 }
 
 func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.ToolHandlerFunc {
@@ -1747,6 +1767,7 @@ func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("workspace setup", err), nil
 		}
+		callerID, _ := identity.FromContext(ctx)
 		limit := maxInputBytes()
 		used, tracked, err := workspace.Usage(resolver)
 		if err != nil {
@@ -1759,7 +1780,11 @@ func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.
 			UsageTracked:      tracked,
 			TypstVersion:      typstVersion,
 			D2Version:         d2Version,
-			FontFamilies:      fontFamilies(workspaceFontPath(resolver)),
+			// A count, not the list. Enumerating every family cost more
+			// than the whole instruction block on a font-rich host, and
+			// answered a question nobody asks — "which fonts exist" is
+			// search_fonts' job, and it can attribute each one.
+			FontCount: len(collectFonts(ctx, store, callerID, resolver)),
 		}
 		if _, ok := resolver.(workspace.Bounded); ok {
 			info.FontsDir = FontsDir
@@ -1771,8 +1796,7 @@ func handleWorkspaceInfo(factory workspace.Factory, store *authdb.Store) server.
 			// Budget/available only when a budget applies (per-workspace
 			// override, else the env default). Unconfigured means unlimited,
 			// so the fields stay absent.
-			id, _ := identity.FromContext(ctx)
-			if budget := effectiveWorkspaceBudget(ctx, store, id); budget > 0 {
+			if budget := effectiveWorkspaceBudget(ctx, store, callerID); budget > 0 {
 				b := budget
 				info.BudgetBytes = &b
 				info.BudgetHuman = humanBytes(budget)

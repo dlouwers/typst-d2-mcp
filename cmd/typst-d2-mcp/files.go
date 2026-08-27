@@ -183,6 +183,7 @@ func handleSearchFile(factory workspace.Factory) server.ToolHandlerFunc {
 		contains := request.GetString("contains", "")
 
 		var hits []fileHit
+		var skipped []string
 		truncated := false
 		err = filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil || d.IsDir() {
@@ -206,8 +207,12 @@ func handleSearchFile(factory workspace.Factory) server.ToolHandlerFunc {
 			}
 			hit := fileHit{Path: rel, Bytes: info.Size(), Human: humanBytes(info.Size())}
 			if contains != "" {
-				line, found := firstMatchingLine(p, contains)
-				if !found {
+				line, result := firstMatchingLine(p, contains)
+				switch result {
+				case searchNoMatch:
+					return nil
+				case searchSkipped:
+					skipped = append(skipped, rel)
 					return nil
 				}
 				hit.Line = line
@@ -225,6 +230,13 @@ func handleSearchFile(factory workspace.Factory) server.ToolHandlerFunc {
 		sort.Slice(hits, func(i, j int) bool { return hits[i].Path < hits[j].Path })
 
 		out := map[string]any{"matches": hits, "count": len(hits)}
+		if len(skipped) > 0 {
+			// Say which files were not searched. Treating them as
+			// non-matches would hand back an answer that looks complete.
+			out["not_searched"] = skipped
+			out["not_searched_reason"] = fmt.Sprintf(
+				"larger than %s; search their contents another way", humanBytes(maxSearchBytes))
+		}
 		if truncated {
 			// Say so rather than silently returning a prefix — a
 			// truncated answer that looks complete is worse than none.
@@ -242,26 +254,53 @@ func handleSearchFile(factory workspace.Factory) server.ToolHandlerFunc {
 	}
 }
 
+// searchResult is what scanning one file for a needle produced.
+type searchResult int
+
+const (
+	searchNoMatch searchResult = iota
+	searchMatched
+	searchSkipped // too large, or not text
+)
+
+// maxSearchBytes bounds how much of one file a content search reads.
+// Generous, because silently not searching a document is worse than
+// spending a moment on a big one — and a file past it is REPORTED as
+// unsearched rather than quietly treated as a non-match.
+const maxSearchBytes = 4 << 20
+
 // firstMatchingLine returns the first line of a text file containing
-// needle. Binary files never match: searching them yields noise, and a
-// byte sequence found inside a PDF tells the caller nothing.
-func firstMatchingLine(path, needle string) (string, bool) {
+// needle, case-insensitively — matching how `name` behaves, because one
+// tool with two matching rules is a trap.
+//
+// Binary files never match: a byte sequence found inside a PDF tells
+// the caller nothing. A file too large to scan is reported as skipped,
+// not as a non-match: an answer that looks complete and is not is the
+// failure this whole tool exists to avoid.
+func firstMatchingLine(path, needle string) (string, searchResult) {
 	info, err := os.Stat(path)
-	if err != nil || info.Size() > maxGetFileBytes {
-		return "", false
+	if err != nil {
+		return "", searchSkipped
+	}
+	if info.Size() > maxSearchBytes {
+		return "", searchSkipped
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || !utf8.Valid(data) {
-		return "", false
+	if err != nil {
+		return "", searchSkipped
 	}
+	if !utf8.Valid(data) {
+		return "", searchNoMatch // binary: a genuine non-match, not a skip
+	}
+	lowerNeedle := strings.ToLower(needle)
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, needle) {
+		if strings.Contains(strings.ToLower(line), lowerNeedle) {
 			line = strings.TrimSpace(line)
 			if len(line) > 160 {
 				line = line[:160] + "…"
 			}
-			return line, true
+			return line, searchMatched
 		}
 	}
-	return "", false
+	return "", searchNoMatch
 }

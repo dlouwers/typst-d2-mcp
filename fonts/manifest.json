@@ -1,0 +1,26 @@
+[
+  {
+    "family": "Inter",
+    "license": "SIL OFL 1.1",
+    "origin": "rsms/inter",
+    "note": "Neutral grotesque. Dense documents, tables, UI-like material."
+  },
+  {
+    "family": "Source Serif 4",
+    "license": "SIL OFL 1.1",
+    "origin": "adobe-fonts/source-serif",
+    "note": "Transitional serif. A workhorse for running text."
+  },
+  {
+    "family": "Source Sans 3",
+    "license": "SIL OFL 1.1",
+    "origin": "adobe-fonts/source-sans",
+    "note": "Humanist sans. Warmer than Inter; good for body text."
+  },
+  {
+    "family": "JetBrains Mono",
+    "license": "SIL OFL 1.1",
+    "origin": "JetBrains/JetBrainsMono",
+    "note": "Monospace. Code, data, anything that must align."
+  }
+]

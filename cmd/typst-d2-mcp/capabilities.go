@@ -168,3 +168,71 @@ func isPDFNameByte(c byte) bool {
 	return c == '-' || c == '_' ||
 		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
+
+// familiesUnder lists the font families a directory provides, ignoring
+// system and typst-embedded fonts so the answer is attributable to that
+// directory alone. An unreadable or absent path yields nothing, which
+// is the normal case for a tenant with no fonts of their own.
+func familiesUnder(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return nil
+	}
+	// #107, again. typst splits --font-path on the list separator, and a
+	// tenant directory is gh:<id> — so probing it directly reads
+	// nothing and reports the tenant has no fonts. The compile path
+	// solves this by routing through the package view; a probe has no
+	// view, so it borrows a colon-free name for the duration.
+	if !safeFontPath(dir) {
+		linked, cleanup, err := linkColonFree(dir)
+		if err != nil {
+			return nil
+		}
+		defer cleanup()
+		dir = linked
+	}
+	out, err := runProbe("typst", "fonts", "--font-path", dir,
+		"--ignore-system-fonts", "--ignore-embedded-fonts")
+	if err != nil {
+		return nil
+	}
+	return nonEmptyLines(out)
+}
+
+// embeddedFamilies lists what typst carries itself.
+func embeddedFamilies() []string {
+	out, err := runProbe("typst", "fonts", "--ignore-system-fonts")
+	if err != nil {
+		return nil
+	}
+	return nonEmptyLines(out)
+}
+
+func nonEmptyLines(s string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// linkColonFree gives a directory a name typst can be told about,
+// returning the safe path and a cleanup. The link target may contain
+// anything; only the argument on the command line has to be clean.
+func linkColonFree(dir string) (string, func(), error) {
+	tmp, err := os.MkdirTemp("", "typst-d2-fontprobe-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	link := filepath.Join(tmp, "fonts")
+	if err := os.Symlink(dir, link); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return link, cleanup, nil
+}

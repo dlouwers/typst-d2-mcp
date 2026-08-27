@@ -280,3 +280,69 @@ func TestGetFile_UploadedImagesAreNotArtefacts(t *testing.T) {
 		t.Error("a PDF was not classed as an artefact")
 	}
 }
+
+// One tool, one matching rule. `name` was case-insensitive and
+// `contains` was not, so the same search behaved differently depending
+// which half you used.
+func TestSearchFile_ContentMatchIsCaseInsensitive(t *testing.T) {
+	f, ctx := fileFixture(t)
+	if res := putFile(t, ctx, f, "doc.typ", "The Stormlantern engagement\n"); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	for _, q := range []string{"stormlantern", "STORMLANTERN", "StOrMlAnTeRn"} {
+		got := decodeSearch(t, callTool(t, handleSearchFile(f), ctx, map[string]any{"contains": q}))
+		if n := int(got["count"].(float64)); n != 1 {
+			t.Errorf("contains %q found %d, want 1", q, n)
+		}
+	}
+}
+
+// A file too large to scan must be reported as unsearched, not quietly
+// treated as a non-match — an answer that looks complete and is not is
+// the failure this tool exists to avoid.
+func TestSearchFile_ReportsWhatItCouldNotSearch(t *testing.T) {
+	f, ctx := fileFixture(t)
+	// A file this large can only be built by chunked append in normal
+	// use; raise the per-call cap so the fixture is one write.
+	t.Setenv(envMaxInputBytes, "8388608")
+	big := strings.Repeat("padding line\n", (maxSearchBytes/13)+64)
+	if res := putFile(t, ctx, f, "huge.typ", big); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	if res := putFile(t, ctx, f, "small.typ", "findme\n"); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+
+	got := decodeSearch(t, callTool(t, handleSearchFile(f), ctx, map[string]any{"contains": "findme"}))
+	skipped, ok := got["not_searched"].([]any)
+	if !ok || len(skipped) != 1 {
+		t.Fatalf("a file too large to scan was not reported: %v", got)
+	}
+	if skipped[0].(string) != "huge.typ" {
+		t.Errorf("reported %v as unsearched, want huge.typ", skipped[0])
+	}
+	if int(got["count"].(float64)) != 1 {
+		t.Errorf("the searchable file was not matched: %v", got)
+	}
+}
+
+// A binary file is a genuine non-match, not something we failed to
+// search — it must not appear in not_searched.
+func TestSearchFile_BinaryIsANonMatchNotASkip(t *testing.T) {
+	f, ctx := fileFixture(t)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"path": "img.png", "content": base64.StdEncoding.EncodeToString([]byte(testPNG)),
+		"encoding": "base64",
+	}
+	if _, err := handlePutFile(f, nil)(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	got := decodeSearch(t, callTool(t, handleSearchFile(f), ctx, map[string]any{"contains": "PNG"}))
+	if got["not_searched"] != nil {
+		t.Errorf("a binary file was reported as unsearched: %v", got["not_searched"])
+	}
+	if int(got["count"].(float64)) != 0 {
+		t.Errorf("a binary file matched a content search")
+	}
+}
