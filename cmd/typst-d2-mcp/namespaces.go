@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
@@ -87,7 +88,7 @@ func sortedNames(allowed map[string]string) []string {
 // A namespace with no directory in the store is skipped rather than
 // failing: an organisation exists in the schema before anyone publishes
 // a template to it (rung 5), and that is not an error.
-func packageView(dataDir string, allowed map[string]string) (string, func(), error) {
+func packageView(dataDir string, allowed map[string]string, workspaceFonts string) (string, func(), error) {
 	viewRoot, err := os.MkdirTemp("", "typst-d2-pkgview-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create package view: %w", err)
@@ -112,6 +113,26 @@ func packageView(dataDir string, allowed map[string]string) (string, func(), err
 		if linkErr := os.Symlink(src, filepath.Join(pkgDir, name)); linkErr != nil {
 			cleanup()
 			return "", nil, fmt.Errorf("link namespace %s: %w", name, linkErr)
+		}
+	}
+
+	// The tenant's own fonts are linked in HERE rather than passed to
+	// typst directly, and that is the whole fix for #107.
+	//
+	// typst splits --font-path on the OS path-list separator, which on
+	// Unix is ":". A tenant workspace is rooted at <root>/gh:<id>, so
+	// its font directory ALWAYS contains a colon, and the path was
+	// always silently split into two nonexistent directories. typst
+	// then substituted and exited 0 — a PDF that looks fine and is
+	// wrong, which is the exact failure #92 was filed about.
+	//
+	// The view root is a mkdtemp path with no colon in it, so a link
+	// from here is safe to name on a command line however the tenant
+	// directory is spelled.
+	if workspaceFonts != "" {
+		if linkErr := os.Symlink(workspaceFonts, filepath.Join(viewRoot, FontsDir)); linkErr != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("link workspace fonts: %w", linkErr)
 		}
 	}
 	return viewRoot, cleanup, nil
@@ -147,5 +168,16 @@ func packageFontPath(view string) string {
 	if view == "" {
 		return ""
 	}
-	return filepath.Join(view, "typst", "packages")
+	// The view root, not the packages subdirectory: typst searches a
+	// font path recursively, so one colon-free path covers both the
+	// templates' own fonts and the tenant's linked fonts/ directory.
+	return view
+}
+
+// safeFontPath reports whether p can survive being named on a typst
+// command line. A path containing the OS list separator is split into
+// pieces that do not exist, and typst says nothing about it — so this
+// is checked rather than assumed. See #107.
+func safeFontPath(p string) bool {
+	return !strings.Contains(p, string(os.PathListSeparator))
 }
