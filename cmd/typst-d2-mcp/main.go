@@ -29,7 +29,6 @@ import (
 	"github.com/dlouwers/typst-d2-mcp/templates"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/yosida95/uritemplate/v3"
 )
 
 // serverVersion is overridden at release time via
@@ -1222,16 +1221,6 @@ is taking up your byte budget before deleting anything.`),
 	s.AddTool(searchFileTool, handleSearchFile(factory))
 }
 
-func registerResources(s *server.MCPServer, factory workspace.Factory) {
-	tmpl := mcp.ResourceTemplate{
-		URITemplate: &mcp.URITemplate{Template: uritemplate.MustNew(pdfURIPrefix + "{+path}")},
-		Name:        "pdf",
-		Description: "Compiled Typst PDF produced by compile_typst_with_d2.",
-		MIMEType:    "application/pdf",
-	}
-	s.AddResourceTemplate(tmpl, handleReadPDF(factory))
-}
-
 func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		filePath, err := request.RequireString("file_path")
@@ -1410,7 +1399,11 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 		}
 		successMsg += fmt.Sprintf(
 			"Fetch it with resources/read on %s%s — that works whether or not you "+
-				"share a filesystem with this server.\n\n", pdfURIPrefix, toolVisibleOut)
+				"share a filesystem with this server.\n"+
+				"To SEE a page rather than the file, read %s%s/1 (and /2, /3 …). "+
+				"Pages render on first read; that is the way to check a layout you "+
+				"cannot otherwise look at.\n\n",
+			pdfURIPrefix, toolVisibleOut, pageURIPrefix, filePath)
 
 		// Diagram advice only where there are diagrams. Appending it
 		// unconditionally meant telling callers to add 'direction: down'

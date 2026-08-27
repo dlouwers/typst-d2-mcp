@@ -33,14 +33,33 @@ import (
 // answer to a question nobody asks, and the same reasoning applies here
 // as to fonts.
 
-// maxGetFileBytes bounds what get_file will return inline.
-//
-// Reading a PDF back through a tool call is the wrong move — base64
-// inflates it by a third and it lands in the caller's context as noise.
-// PDFs have a resource URI for exactly this, so a large or binary file
-// is refused with a pointer at the right mechanism rather than being
-// silently truncated.
+// maxGetFileBytes bounds what get_file will return inline. The cap is a
+// backstop; the real division is artefact vs source — see artefactURI.
 const maxGetFileBytes = 256 << 10
+
+// artefactURI reports whether a path names something the server
+// rendered rather than something a caller wrote, and where to read it.
+//
+// Rendered output belongs on the resource side whatever its size: the
+// client streams it to a file, so it costs the caller no context at
+// all. Refusing only when a file happens to be large would send a
+// small PDF through the worse mechanism for no reason.
+// Only output the SERVER produced counts. A .png the caller pushed is a
+// logo or a figure — their file, and refusing it would be telling them
+// their own asset is an artefact. Rendered pages are distinguished by
+// living under the preview directory, not by extension.
+func artefactURI(path string) (string, bool) {
+	clean := filepath.ToSlash(path)
+	if strings.EqualFold(filepath.Ext(clean), ".pdf") {
+		return pdfURIPrefix + clean, true
+	}
+	for _, seg := range strings.Split(clean, "/") {
+		if seg == previewDir {
+			return pageURIPrefix + clean, true
+		}
+	}
+	return "", false
+}
 
 func handleGetFile(factory workspace.Factory) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -61,15 +80,28 @@ func handleGetFile(factory workspace.Factory) server.ToolHandlerFunc {
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("read file", err), nil
 		}
-		if info.Size() > maxGetFileBytes {
-			hint := ""
+		// Artefacts go out as resources, not through here — and that is
+		// a judgement about PURPOSE, not size. A client reading a
+		// resource saves the bytes to a file and hands back a path, so
+		// a PDF never enters the caller's context; base64 through a
+		// tool result is strictly the worse mechanism for the same job.
+		// Source you are about to edit is the opposite case: you want
+		// the text in front of you, which is what this tool is for.
+		if uri, isArtefact := artefactURI(path); isArtefact {
+			msg := fmt.Sprintf(
+				"%s is a rendered artefact, not source. Read it with resources/read on %s — "+
+					"your client saves it to a file instead of filling your context.", path, uri)
 			if strings.EqualFold(filepath.Ext(path), ".pdf") {
-				hint = fmt.Sprintf(" Fetch the PDF with resources/read on %s%s instead.",
-					pdfURIPrefix, path)
+				msg += fmt.Sprintf(" To SEE a page rather than the file, read %s%s/<page number>.",
+					pageURIPrefix, strings.TrimSuffix(path, filepath.Ext(path))+".typ")
 			}
+			return mcp.NewToolResultError(msg), nil
+		}
+		if info.Size() > maxGetFileBytes {
 			return mcp.NewToolResultError(fmt.Sprintf(
-				"%s is %s; get_file returns at most %s.%s",
-				path, humanBytes(info.Size()), humanBytes(maxGetFileBytes), hint)), nil
+				"%s is %s; get_file returns at most %s. Read it as a resource instead: %s%s",
+				path, humanBytes(info.Size()), humanBytes(maxGetFileBytes),
+				sourceURIPrefix, path)), nil
 		}
 
 		data, err := os.ReadFile(resolved)
