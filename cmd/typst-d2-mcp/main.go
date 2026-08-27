@@ -261,6 +261,12 @@ WORKSPACE, FILES & LIMITS (put_file / workspace_info):
   put_file BEFORE you compile. Do that rather than giving up or falling
   back to a local toolchain, which a hosted deployment may not have.
 
+  put_file is not the only file verb: get_file reads one back, so a
+  small edit does not mean re-uploading a whole document; search_file
+  finds what you wrote earlier; delete_file reclaims the bytes of
+  scratch you are done with, which nothing else frees before the
+  sweeper's TTL.
+
   put_file's size limit is on the DECODED bytes, roughly 3/4 of the
   base64 string you pass — NOT the string's length. An asset that fits
   under the limit (see workspace_info.per_call_limit_bytes) goes in one
@@ -1160,6 +1166,60 @@ Publish 1.0.1 instead; the old version keeps working.`),
 		),
 	)
 	s.AddTool(publishTemplateTool, handlePublishTemplate(factory, store))
+
+	// The rest of the workspace verbs. put_file alone meant a caller
+	// could write a document and then neither read it back, find it,
+	// nor remove it — so edits meant re-uploading whole files and
+	// scratch accumulated with no way to reclaim the space.
+	getFileTool := mcp.NewTool("get_file",
+		mcp.WithDescription(fmt.Sprintf(`Read a file back out of the workspace.
+
+Use this before editing something you wrote earlier, rather than
+re-uploading a whole document to change a line.
+
+Returns text as text. A file that is not valid UTF-8 is refused unless
+you pass encoding "base64", because bytes you cannot read are not an
+answer. Files over %s are refused outright — for a PDF, fetch it with
+resources/read on %s<path> instead, which streams rather than filling
+your context.`, humanBytes(maxGetFileBytes), pdfURIPrefix)),
+		mcp.WithString("path", mcp.Required(),
+			mcp.Description("Workspace-relative path in scoped/hosted mode; any path in local mode.")),
+		mcp.WithString("encoding",
+			mcp.Description(`Omit for text. "base64" to get the raw bytes of a non-text file.`)),
+	)
+	s.AddTool(getFileTool, handleGetFile(factory))
+
+	deleteFileTool := mcp.NewTool("delete_file",
+		mcp.WithDescription(`Delete one file from the workspace and reclaim its bytes.
+
+Use it for scratch you no longer need — probe documents, superseded
+drafts, page previews. A workspace may have a cumulative byte budget,
+and nothing else frees space before the sweeper's file TTL expires.
+
+Removes a single file. Directories are refused.`),
+		mcp.WithString("path", mcp.Required(),
+			mcp.Description("Workspace-relative path in scoped/hosted mode; any path in local mode.")),
+	)
+	s.AddTool(deleteFileTool, handleDeleteFile(factory))
+
+	searchFileTool := mcp.NewTool("search_file",
+		mcp.WithDescription(`Find files in your workspace by name, by content, or both.
+
+  name      substring of the path, case-insensitive  ("report", ".typ")
+  contains  text that must appear inside the file    ("Stormlantern")
+
+Both are optional; with neither, you get everything. Returns each
+match's path and size, plus the first matching line when searching by
+content. Binary files never match a content search.
+
+Use it to find what you wrote earlier in a long session, or to see what
+is taking up your byte budget before deleting anything.`),
+		mcp.WithString("name",
+			mcp.Description("Case-insensitive substring of the path.")),
+		mcp.WithString("contains",
+			mcp.Description("Text that must appear inside the file. Text files only.")),
+	)
+	s.AddTool(searchFileTool, handleSearchFile(factory))
 }
 
 func registerResources(s *server.MCPServer, factory workspace.Factory) {
