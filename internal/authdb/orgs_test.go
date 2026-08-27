@@ -60,16 +60,16 @@ func TestOrg_Membership(t *testing.T) {
 		t.Fatalf("CreateOrg: %v", err)
 	}
 
-	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice"); err != nil {
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice", RoleMember); err != nil {
 		t.Fatalf("AddOrgMember alice: %v", err)
 	}
-	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "bob"); err != nil {
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "bob", RoleMember); err != nil {
 		t.Fatalf("AddOrgMember bob: %v", err)
 	}
 
 	// Idempotency guard: adding the same member again is a clear signal,
 	// not a silent success.
-	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice"); !errors.Is(err, ErrAlreadyMember) {
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice", RoleMember); !errors.Is(err, ErrAlreadyMember) {
 		t.Errorf("re-add = %v, want ErrAlreadyMember", err)
 	}
 
@@ -113,12 +113,136 @@ func TestOrg_MembershipErrors(t *testing.T) {
 		t.Fatalf("CreateOrg: %v", err)
 	}
 	// Unknown user (never signed in).
-	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "ghost"); !errors.Is(err, ErrNoSuchUser) {
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "ghost", RoleMember); !errors.Is(err, ErrNoSuchUser) {
 		t.Errorf("AddOrgMember(unknown user) = %v, want ErrNoSuchUser", err)
 	}
 	// Unknown org.
 	seedUser(t, s, 1, "alice")
-	if err := s.AddOrgMember(ctx, "dlouwers", "nope", "alice"); !errors.Is(err, ErrNoSuchNamespace) {
+	if err := s.AddOrgMember(ctx, "dlouwers", "nope", "alice", RoleMember); !errors.Is(err, ErrNoSuchNamespace) {
 		t.Errorf("AddOrgMember(unknown org) = %v, want ErrNoSuchNamespace", err)
+	}
+}
+
+// Ownership is what grants publishing. Without a way to assign it, an
+// organisation namespace could be created, filled with members, and
+// remain permanently unpublishable by everyone — which is the state
+// every org namespace was in.
+func TestOrg_OwnershipCanBeAssigned(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	if err := s.CreateOrg(ctx, "dlouwers", "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	alice := seedUser(t, s, 1, "alice")
+
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.ResolveName(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if role, _ := s.RoleFor(ctx, id, alice); role != RoleMember {
+		t.Fatalf("role = %q, want member", role)
+	}
+
+	if err := s.SetOrgMemberRole(ctx, "dlouwers", "acme", "alice", RoleOwner); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	if role, _ := s.RoleFor(ctx, id, alice); role != RoleOwner {
+		t.Errorf("role after promotion = %q, want owner", role)
+	}
+}
+
+// A member may be added straight as an owner, so a new organisation is
+// not born unpublishable.
+func TestOrg_MemberCanBeAddedAsOwner(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	if err := s.CreateOrg(ctx, "dlouwers", "acme", ""); err != nil {
+		t.Fatal(err)
+	}
+	alice := seedUser(t, s, 1, "alice")
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice", RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := s.ResolveName(ctx, "acme")
+	if role, _ := s.RoleFor(ctx, id, alice); role != RoleOwner {
+		t.Errorf("role = %q, want owner", role)
+	}
+}
+
+// The last owner cannot be removed or demoted. A namespace with no
+// owner is permanently unpublishable and there is no way back, so the
+// state must be unreachable rather than merely discouraged.
+func TestOrg_LastOwnerIsProtected(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	if err := s.CreateOrg(ctx, "dlouwers", "acme", ""); err != nil {
+		t.Fatal(err)
+	}
+	seedUser(t, s, 1, "alice")
+	seedUser(t, s, 2, "bob")
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice", RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "bob", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetOrgMemberRole(ctx, "dlouwers", "acme", "alice", RoleMember); !errors.Is(err, ErrLastOwner) {
+		t.Errorf("demoting the only owner = %v, want ErrLastOwner", err)
+	}
+	if err := s.RemoveOrgMember(ctx, "dlouwers", "acme", "alice"); !errors.Is(err, ErrLastOwner) {
+		t.Errorf("removing the only owner = %v, want ErrLastOwner", err)
+	}
+	// A non-owner is removable, and does not count as protection.
+	if err := s.RemoveOrgMember(ctx, "dlouwers", "acme", "bob"); err != nil {
+		t.Errorf("removing a plain member: %v", err)
+	}
+
+	// With a second owner, the first may go.
+	seedUser(t, s, 3, "carol")
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "carol", RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveOrgMember(ctx, "dlouwers", "acme", "alice"); err != nil {
+		t.Errorf("removing an owner when another remains: %v", err)
+	}
+	// …and now carol is protected in turn.
+	if err := s.RemoveOrgMember(ctx, "dlouwers", "acme", "carol"); !errors.Is(err, ErrLastOwner) {
+		t.Errorf("removing the new last owner = %v, want ErrLastOwner", err)
+	}
+}
+
+// A personal namespace has exactly one owner, so the same guard keeps
+// somebody from being orphaned out of their own workspace.
+func TestOrg_PersonalNamespaceOwnerIsProtected(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	if _, err := s.UpsertGitHubUser(ctx, 9, "solo", "solo@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	name := DerivedName(9)
+	if err := s.RemoveOrgMember(ctx, "dlouwers", name, "solo"); !errors.Is(err, ErrLastOwner) {
+		t.Errorf("removing someone from their own namespace = %v, want ErrLastOwner", err)
+	}
+}
+
+func TestOrg_UnknownRoleRejected(t *testing.T) {
+	s := newStore(t)
+	ctx := t.Context()
+	if err := s.CreateOrg(ctx, "dlouwers", "acme", ""); err != nil {
+		t.Fatal(err)
+	}
+	seedUser(t, s, 1, "alice")
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice", "admin"); err == nil {
+		t.Error("an unknown role was accepted on add")
+	}
+	if err := s.AddOrgMember(ctx, "dlouwers", "acme", "alice", RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetOrgMemberRole(ctx, "dlouwers", "acme", "alice", "superuser"); err == nil {
+		t.Error("an unknown role was accepted on change")
 	}
 }

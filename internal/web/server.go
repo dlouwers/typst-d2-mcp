@@ -144,6 +144,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /admin/orgs/delete":         s.handleDeleteOrg,
 		"POST /admin/orgs/members/add":    s.handleAddOrgMember,
 		"POST /admin/orgs/members/remove": s.handleRemoveOrgMember,
+		"POST /admin/orgs/members/role":   s.handleSetOrgRole,
 	} {
 		mux.Handle(path, s.requireAdmin(handler))
 	}

@@ -139,7 +139,7 @@ func TestNamespace_GrowsWithoutMigrating(t *testing.T) {
 	if _, err := s.UpsertGitHubUser(ctx, 2, "colleague", "c@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AddOrgMember(ctx, "admin", "acme", "colleague"); err != nil {
+	if err := s.AddOrgMember(ctx, "admin", "acme", "colleague", RoleMember); err != nil {
 		t.Fatal(err)
 	}
 

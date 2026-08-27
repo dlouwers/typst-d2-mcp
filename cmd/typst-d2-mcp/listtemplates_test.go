@@ -71,7 +71,7 @@ func TestListTemplates_MatchesWhatTheCallerCanCompile(t *testing.T) {
 	writePackageForName(t, store, data, "acme", "1.0.0")
 	writePackageForName(t, store, data, "globex", "2.0.0")
 	member := seedUser(t, store, "member", 1)
-	if err := store.AddOrgMember(ctx, "admin", "acme", "member"); err != nil {
+	if err := store.AddOrgMember(ctx, "admin", "acme", "member", authdb.RoleMember); err != nil {
 		t.Fatal(err)
 	}
 
@@ -245,7 +245,7 @@ func TestListTemplates_MembershipIsNotWritable(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := seedUser(t, store, "member", 6)
-	if err := store.AddOrgMember(context.Background(), "admin", "acme", "member"); err != nil {
+	if err := store.AddOrgMember(context.Background(), "admin", "acme", "member", authdb.RoleMember); err != nil {
 		t.Fatal(err)
 	}
 

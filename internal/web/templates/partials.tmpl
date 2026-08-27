@@ -154,8 +154,26 @@
       <tbody>
       {{range .Members}}
         <tr>
-          <td><strong>{{.GitHubLogin}}</strong>{{if .Email}} <span class="muted">{{.Email}}</span>{{end}}</td>
+          <td>
+            <strong>{{.GitHubLogin}}</strong>{{if .Email}} <span class="muted">{{.Email}}</span>{{end}}
+            {{if eq .Role "owner"}}<sl-badge variant="success">owner</sl-badge>{{end}}
+          </td>
           <td class="num">
+            {{/* Ownership is what grants publishing, so it is set here.
+                 Without it an organisation namespace can be created,
+                 filled with members, and still be unpublishable by
+                 everyone. */}}
+            <form method="post" action="/admin/orgs/members/role" hx-post="/admin/orgs/members/role" hx-target="#orgs" hx-swap="outerHTML">
+              <input type="hidden" name="slug" value="{{$slug}}">
+              <input type="hidden" name="login" value="{{.GitHubLogin}}">
+              {{if eq .Role "owner"}}
+                <input type="hidden" name="role" value="member">
+                <button type="submit" class="btn btn-sm">Make member</button>
+              {{else}}
+                <input type="hidden" name="role" value="owner">
+                <button type="submit" class="btn btn-sm">Make owner</button>
+              {{end}}
+            </form>
             <form method="post" action="/admin/orgs/members/remove" hx-post="/admin/orgs/members/remove" hx-target="#orgs" hx-swap="outerHTML">
               <input type="hidden" name="slug" value="{{$slug}}">
               <input type="hidden" name="login" value="{{.GitHubLogin}}">
@@ -174,6 +192,12 @@
         <input type="hidden" name="slug" value="{{.Slug}}">
         <label>Add member
           <input type="text" name="login" placeholder="github-login" autocomplete="off" required>
+        </label>
+        <label>Role
+          <select name="role">
+            <option value="member">member — may import</option>
+            <option value="owner">owner — may publish</option>
+          </select>
         </label>
         <button type="submit" class="btn btn-sm">Add</button>
       </form>

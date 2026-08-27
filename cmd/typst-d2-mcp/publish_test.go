@@ -215,7 +215,7 @@ func TestPublish_RequiresOwnership(t *testing.T) {
 	if err := f.store.CreateOrg(t.Context(), "admin", "acme", "Acme"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.AddOrgMember(t.Context(), "admin", "acme", "author"); err != nil {
+	if err := f.store.AddOrgMember(t.Context(), "admin", "acme", "author", authdb.RoleMember); err != nil {
 		t.Fatal(err)
 	}
 	res := f.publish(t, "tpl", "acme", "1.0.0")
@@ -563,5 +563,45 @@ func TestPublish_ExcludesHiddenDirectories(t *testing.T) {
 	})
 	if len(shipped) != 2 {
 		t.Errorf("shipped %v, want exactly typst.toml and lib.typ", shipped)
+	}
+}
+
+// The end of the dead feature: an owner of an organisation namespace
+// can publish to it. Before ownership could be assigned, nobody could —
+// every org namespace was permanently unpublishable, and it went
+// unnoticed because every test published to a personal namespace, where
+// you are the owner by construction.
+func TestPublish_OwnerOfAnOrgCanPublishToIt(t *testing.T) {
+	f := newPublishFixture(t)
+	if err := f.store.CreateOrg(t.Context(), "admin", "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddOrgMember(t.Context(), "admin", "acme", "author", authdb.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	f.stage(t, "tpl", map[string]string{"typst.toml": goodTOML, "lib.typ": goodLib})
+
+	if res := f.publish(t, "tpl", "acme", "1.0.0"); res.IsError {
+		t.Fatalf("an owner could not publish to their organisation: %s", resultText(res))
+	}
+}
+
+// And a member still cannot — ownership is the boundary, not membership.
+func TestPublish_MemberOfAnOrgStillCannot(t *testing.T) {
+	f := newPublishFixture(t)
+	if err := f.store.CreateOrg(t.Context(), "admin", "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.AddOrgMember(t.Context(), "admin", "acme", "author", authdb.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	f.stage(t, "tpl", map[string]string{"typst.toml": goodTOML, "lib.typ": goodLib})
+
+	res := f.publish(t, "tpl", "acme", "1.0.0")
+	if !res.IsError {
+		t.Fatal("a member published to an organisation they do not own")
+	}
+	if !strings.Contains(resultText(res), "not an owner") {
+		t.Errorf("refusal does not explain: %s", resultText(res))
 	}
 }

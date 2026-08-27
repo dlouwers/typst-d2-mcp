@@ -24,7 +24,19 @@ const (
 	ActionDeleteOrg       = "delete_org"
 	ActionAddOrgMember    = "add_org_member"
 	ActionRemoveOrgMember = "remove_org_member"
+	ActionSetOrgRole      = "set_org_role"
 )
+
+// ErrLastOwner is returned when an action would leave a namespace with
+// nobody able to publish to it.
+//
+// A namespace without an owner is not merely awkward — it is
+// permanently unpublishable, because ownership is the only thing that
+// grants publishing and there is no way to acquire it from outside.
+// That state was reachable and went unnoticed: CreateOrg made a
+// namespace and no owner at all, so every organisation namespace was
+// dead on arrival.
+var ErrLastOwner = errors.New("that would leave the namespace with no owner")
 
 // Org is one shared namespace, presented for the admin UI.
 type Org struct {
@@ -124,7 +136,10 @@ SELECT nn.name, nn.display_name, nn.created_by, nn.created_at,
 // They join as a member, not an owner: publishing is an owner's right,
 // and handing it out as a side effect of being added to an organisation
 // is not something an administrator asked for.
-func (s *Store) AddOrgMember(ctx context.Context, actor, slug, login string) error {
+func (s *Store) AddOrgMember(ctx context.Context, actor, slug, login, role string) error {
+	if role != RoleOwner && role != RoleMember {
+		return fmt.Errorf("unknown role %q (expected %q or %q)", role, RoleOwner, RoleMember)
+	}
 	target := NormalizeLogin(login)
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		id, err := resolveNameTx(ctx, tx, slug)
@@ -143,7 +158,7 @@ func (s *Store) AddOrgMember(ctx context.Context, actor, slug, login string) err
 		userID := fmt.Sprintf("gh:%d", githubID.Int64)
 		res, err := tx.ExecContext(ctx, `
 INSERT INTO namespace_members (namespace_id, user_id, role, created_by) VALUES (?, ?, ?, ?)
-ON CONFLICT (namespace_id, user_id) DO NOTHING`, id, userID, RoleMember, actor)
+ON CONFLICT (namespace_id, user_id) DO NOTHING`, id, userID, role, actor)
 		if err != nil {
 			return fmt.Errorf("add member: %w", err)
 		}
@@ -161,6 +176,11 @@ func (s *Store) RemoveOrgMember(ctx context.Context, actor, slug, login string) 
 		id, err := resolveNameTx(ctx, tx, slug)
 		if err != nil {
 			return err
+		}
+		if last, checkErr := wouldStrandNamespace(ctx, tx, id, target); checkErr != nil {
+			return checkErr
+		} else if last {
+			return ErrLastOwner
 		}
 		res, err := tx.ExecContext(ctx, `
 DELETE FROM namespace_members
@@ -216,4 +236,66 @@ func resolveNameTx(ctx context.Context, tx *sql.Tx, name string) (string, error)
 		return "", fmt.Errorf("resolve name: %w", err)
 	}
 	return id, nil
+}
+
+// SetOrgMemberRole promotes or demotes an existing member.
+//
+// Ownership is what grants publishing, so this is how a namespace
+// acquires somebody who can publish to it. Demoting the last owner is
+// refused for the same reason removing them is: the namespace would
+// become permanently unpublishable with no way back.
+func (s *Store) SetOrgMemberRole(ctx context.Context, actor, slug, login, role string) error {
+	if role != RoleOwner && role != RoleMember {
+		return fmt.Errorf("unknown role %q (expected %q or %q)", role, RoleOwner, RoleMember)
+	}
+	target := NormalizeLogin(login)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		id, err := resolveNameTx(ctx, tx, slug)
+		if err != nil {
+			return err
+		}
+		if role == RoleMember {
+			if last, checkErr := wouldStrandNamespace(ctx, tx, id, target); checkErr != nil {
+				return checkErr
+			} else if last {
+				return ErrLastOwner
+			}
+		}
+		res, err := tx.ExecContext(ctx, `
+UPDATE namespace_members SET role = ?
+ WHERE namespace_id = ?
+   AND user_id = (SELECT 'gh:' || github_id FROM users WHERE LOWER(github_login) = ?)`,
+			role, id, target)
+		if err != nil {
+			return fmt.Errorf("set role: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNoSuchUser
+		}
+		return auditTx(ctx, tx, actor, ActionSetOrgRole, target, slug+" → "+role)
+	})
+}
+
+// wouldStrandNamespace reports whether removing or demoting this member
+// would leave the namespace with no owner.
+func wouldStrandNamespace(ctx context.Context, tx *sql.Tx, namespaceID, login string) (bool, error) {
+	var isOwner int
+	err := tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM namespace_members
+ WHERE namespace_id = ? AND role = ?
+   AND user_id = (SELECT 'gh:' || github_id FROM users WHERE LOWER(github_login) = ?)`,
+		namespaceID, RoleOwner, login).Scan(&isOwner)
+	if err != nil {
+		return false, fmt.Errorf("check ownership: %w", err)
+	}
+	if isOwner == 0 {
+		return false, nil // not an owner; removing them strands nothing
+	}
+	var owners int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM namespace_members WHERE namespace_id = ? AND role = ?`,
+		namespaceID, RoleOwner).Scan(&owners); err != nil {
+		return false, fmt.Errorf("count owners: %w", err)
+	}
+	return owners <= 1, nil
 }

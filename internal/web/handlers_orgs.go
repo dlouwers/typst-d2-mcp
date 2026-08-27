@@ -117,7 +117,11 @@ func (s *Server) handleAddOrgMember(w http.ResponseWriter, r *http.Request) {
 		s.respondOrgAction(w, r, flashError, err.Error())
 		return
 	}
-	if err := s.cfg.Store.AddOrgMember(r.Context(), adminLogin(r.Context()), slug, login); err != nil {
+	role := authdb.RoleMember
+	if r.PostFormValue("role") == authdb.RoleOwner {
+		role = authdb.RoleOwner
+	}
+	if err := s.cfg.Store.AddOrgMember(r.Context(), adminLogin(r.Context()), slug, login, role); err != nil {
 		switch {
 		case errors.Is(err, authdb.ErrNoSuchUser):
 			s.respondOrgAction(w, r, flashError, login+" has not signed in yet, so there is no account to add")
@@ -144,6 +148,12 @@ func (s *Server) handleRemoveOrgMember(w http.ResponseWriter, r *http.Request) {
 	if err := s.cfg.Store.RemoveOrgMember(r.Context(), adminLogin(r.Context()), slug, login); err != nil {
 		if errors.Is(err, authdb.ErrNoSuchUser) {
 			s.respondOrgAction(w, r, flashError, login+" is not a member of "+slug)
+			return
+		}
+		if errors.Is(err, authdb.ErrLastOwner) {
+			s.respondOrgAction(w, r, flashError,
+				login+" is the only owner of "+slug+". Make someone else an owner first, "+
+					"or nobody will be able to publish to it.")
 			return
 		}
 		slog.Error("admin: remove org member", "slug", slug, "login", login, "err", err)
@@ -195,4 +205,43 @@ func (s *Server) renderOrgsFragment(w http.ResponseWriter, r *http.Request) {
 	if err := s.fragments.ExecuteTemplate(w, "orgs-list", vm); err != nil {
 		slog.Error("admin: render orgs fragment", "err", err)
 	}
+}
+
+// handleSetOrgRole promotes a member to owner, or demotes them back.
+//
+// Ownership is what grants publishing, so without this an organisation
+// namespace could be created, filled with members, and still be
+// permanently unpublishable by everyone.
+func (s *Server) handleSetOrgRole(w http.ResponseWriter, r *http.Request) {
+	slug, login, err := orgMemberForm(r)
+	if err != nil {
+		s.respondOrgAction(w, r, flashError, err.Error())
+		return
+	}
+	role := r.PostFormValue("role")
+	if role != authdb.RoleOwner && role != authdb.RoleMember {
+		s.respondOrgAction(w, r, flashError, "role must be owner or member")
+		return
+	}
+	if err := s.cfg.Store.SetOrgMemberRole(r.Context(), adminLogin(r.Context()), slug, login, role); err != nil {
+		switch {
+		case errors.Is(err, authdb.ErrNoSuchUser):
+			s.respondOrgAction(w, r, flashError, login+" is not a member of "+slug)
+		case errors.Is(err, authdb.ErrNoSuchNamespace):
+			s.respondOrgAction(w, r, flashError, "no organisation named "+slug)
+		case errors.Is(err, authdb.ErrLastOwner):
+			s.respondOrgAction(w, r, flashError,
+				login+" is the only owner of "+slug+". Make someone else an owner first, "+
+					"or nobody will be able to publish to it.")
+		default:
+			slog.Error("admin: set org role", "slug", slug, "login", login, "err", err)
+			s.respondOrgAction(w, r, flashError, "could not change "+login+"'s role in "+slug)
+		}
+		return
+	}
+	article := "a"
+	if role == authdb.RoleOwner {
+		article = "an"
+	}
+	s.respondOrgAction(w, r, flashNotice, login+" is now "+article+" "+role+" of "+slug)
 }
