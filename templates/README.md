@@ -132,6 +132,21 @@ that `_`- and `.`-prefixed entries are not silently dropped; a bare
 `//go:embed` skips them, which would build cleanly and fail at a user's
 compile.
 
+### The one styling argument
+
+`report` and `adr` both take `numbering:`, defaulting to `none`. It
+exists because typst forces the choice: `@label` cannot reference an
+unnumbered heading, and the compiler's suggested fix —
+`#set heading(numbering: "1.")` — is exactly the restyling these
+templates forbid. Refusing the argument would not have kept documents
+consistent; it would have sent authors to `#set` in their own documents,
+which is worse.
+
+It is bounded on purpose. It decides whether headings are numbered and
+nothing else; fonts, colours, geometry and the type scale still come
+from the template and only from the template. Treat it as the exception
+that proves the rule rather than the first of a series.
+
 ### Either way
 
 Two shapes exist deliberately:

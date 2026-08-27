@@ -18,6 +18,13 @@
 //
 // Styling only ever comes from here. A document that overrides fonts or
 // colours has opted out of the house style, which defeats the point.
+//
+// One exception, and it is deliberate: `numbering:`. Cross-referencing a
+// heading with `@label` is impossible in typst without it, so refusing
+// the argument would not have kept documents consistent — it would have
+// sent authors to `#set heading(...)` in their own documents, which is
+// worse. The argument is bounded: it decides whether headings are
+// numbered and nothing else.
 
 #let _accent = rgb("#1f5673")
 #let _muted = rgb("#5b6b73")
@@ -25,7 +32,20 @@
 // Page geometry suits A4 portrait with diagrams: generous margins so a
 // wide `#d2` block has somewhere to breathe rather than touching the
 // edge of the page.
-#let _page-setup(body) = {
+#let _page-setup(numbering: none, body) = {
+  // Heading numbering is the ONE thing a document may ask this template
+  // to change, and it is here because typst forces the choice: `@ref`
+  // to a heading hard-errors without numbering, and the compiler's own
+  // hint is `#set heading(numbering: "1.")` — precisely the restyling
+  // these templates forbid. A caller following the compiler silently
+  // opted out of the house style; one following the instructions lost
+  // cross-references. Neither is a good outcome, so numbering became an
+  // argument rather than a rule to break.
+  //
+  // It is not a precedent for styling knobs generally. Everything else
+  // — fonts, colours, page geometry, the type scale — still comes from
+  // here and only from here.
+  set heading(numbering: numbering)
   set page(
     paper: "a4",
     margin: (top: 2.5cm, bottom: 2.5cm, x: 2.2cm),
@@ -83,9 +103,10 @@
   subtitle: none,
   author: none,
   date: datetime.today().display("[year]-[month]-[day]"),
+  numbering: none,
   body,
 ) = {
-  show: _page-setup
+  show: _page-setup.with(numbering: numbering)
   _title-block(title, subtitle, author, date)
   body
 }
@@ -113,9 +134,10 @@
   decision: [],
   consequences: [],
   alternatives: none,
+  numbering: none,
   body,
 ) = {
-  show: _page-setup
+  show: _page-setup.with(numbering: numbering)
 
   let heading-text = if number != none [ADR #number: #title] else [#title]
   _title-block(heading-text, none, none, date)
