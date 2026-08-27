@@ -32,6 +32,12 @@ test-*.pdf
 # Go
 /typst-d2-prep
 /typst-d2-mcp
+# Scratch binaries built for local experiments. A 26MB build artefact
+# reached main once already, swept in by a broad `git add`; the pattern
+# is here so it cannot happen from a filename nobody remembered.
+/.research-mcpd
+/.mcpd-*
+/.fontcheck/
 *.test
 *.out
 coverage.txt
