@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -237,5 +239,73 @@ func TestParseExports_DescribeTheVersionThatIsImported(t *testing.T) {
 	}
 	if want := `report(title: "Untitled", author: none, body)`; seen["2.0.0"] != want {
 		t.Errorf("2.0.0 signature = %q, want %q", seen["2.0.0"], want)
+	}
+}
+
+// The claim this whole listing rests on is that a caller can write a
+// correct call from it WITHOUT compiling first. That is not something to
+// assert by hand — so this synthesises a call from nothing but the
+// parsed signature and puts it through the real typst binary. If a
+// parameter name is misread, or a positional one is reported as named
+// (or the reverse), typst refuses it.
+func TestParseExports_ASignatureIsEnoughToWriteACorrectCall(t *testing.T) {
+	if _, err := exec.LookPath("typst"); err != nil {
+		t.Skip("typst not installed")
+	}
+	lib := filepath.Join(repoTemplates(t), templateNamespace, "templates", "0.1.0", "lib.typ")
+	exports := parseExports(lib)
+	if len(exports) == 0 {
+		t.Fatalf("no exports parsed from %s", lib)
+	}
+
+	var applied int
+	for _, e := range exports {
+		if !e.Template {
+			continue
+		}
+		applied++
+		t.Run(e.Name, func(t *testing.T) {
+			// Built from the listing alone: every named parameter passed
+			// by name with the default the listing reported, and the body
+			// left to `#show:`, which is what "template": true promises.
+			var args []string
+			for _, p := range e.Params {
+				if p.Positional {
+					if p.Name != "body" {
+						t.Fatalf("%s takes a positional %q the listing gives no way to supply",
+							e.Name, p.Name)
+					}
+					continue
+				}
+				args = append(args, p.Name+": "+p.Default)
+			}
+			src := fmt.Sprintf("#import %q: %s\n#show: %s.with(%s)\n= Heading\nBody.\n",
+				"@"+templateNamespace+"/templates:0.1.0", e.Name, e.Name,
+				strings.Join(args, ", "))
+
+			dir := t.TempDir()
+			in := filepath.Join(dir, "doc.typ")
+			if err := os.WriteFile(in, []byte(src), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			staged := t.TempDir()
+			pkgRoot := filepath.Join(staged, "typst", "packages")
+			if err := os.MkdirAll(pkgRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(repoTemplates(t), templateNamespace),
+				filepath.Join(pkgRoot, templateNamespace)); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("typst", "compile", in, filepath.Join(dir, "doc.pdf"))
+			cmd.Env = append(os.Environ(), "XDG_DATA_HOME="+staged)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("a call written from the listing alone did not compile: %v\n%s\n\n%s",
+					err, src, out)
+			}
+		})
+	}
+	if applied == 0 {
+		t.Fatal("no export was reported as applicable with #show:")
 	}
 }
