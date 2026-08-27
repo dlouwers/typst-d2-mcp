@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
+	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 	"github.com/dlouwers/typst-d2-mcp/internal/preprocessor"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -44,7 +46,7 @@ const (
 	previewDir      = ".previews"
 )
 
-func registerResources(s *server.MCPServer, factory workspace.Factory) {
+func registerResources(s *server.MCPServer, factory workspace.Factory, store *authdb.Store) {
 	s.AddResourceTemplate(mcp.ResourceTemplate{
 		URITemplate: templateFor(pdfURIPrefix + "{+path}"),
 		Name:        "pdf",
@@ -66,7 +68,7 @@ func registerResources(s *server.MCPServer, factory workspace.Factory) {
 			"Address as typst-d2://page/<document.typ>/<page number>. " +
 			"Pages are rendered on first read, not at compile time.",
 		MIMEType: "image/png",
-	}, handleReadPage(factory))
+	}, handleReadPage(factory, store))
 
 	// A concrete resource, so resources/list has something to return.
 	// Without it a caller asking what is readable is told nothing is,
@@ -113,7 +115,7 @@ func handleReadSource(factory workspace.Factory) server.ResourceTemplateHandlerF
 // pages in the workspace, so the second read is free. Cached pages
 // older than the source are re-rendered, so a stale preview cannot be
 // served as if it were current.
-func handleReadPage(factory workspace.Factory) server.ResourceTemplateHandlerFunc {
+func handleReadPage(factory workspace.Factory, store *authdb.Store) server.ResourceTemplateHandlerFunc {
 	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		spec, err := uriPath(req.Params.URI, pageURIPrefix)
 		if err != nil {
@@ -137,7 +139,8 @@ func handleReadPage(factory workspace.Factory) server.ResourceTemplateHandlerFun
 			return nil, err
 		}
 
-		pageFile, err := renderPages(ctx, resolver, docRel, srcPath, page)
+		id, _ := identity.FromContext(ctx)
+		pageFile, err := renderPages(ctx, store, id, resolver, docRel, srcPath, page)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +162,8 @@ func handleReadPage(factory workspace.Factory) server.ResourceTemplateHandlerFun
 // byte budget, which is deliberate: the caller asked for them, and
 // hiding storage a caller caused is how quotas stop meaning anything.
 // delete_file reclaims them.
-func renderPages(ctx context.Context, r workspace.Resolver, docRel, srcPath string, page int) (string, error) {
+func renderPages(ctx context.Context, store *authdb.Store, id identity.Identity,
+	r workspace.Resolver, docRel, srcPath string, page int) (string, error) {
 	outDir, err := r.Resolve(previewDirFor(docRel))
 	if err != nil {
 		return "", err
@@ -201,9 +205,28 @@ func renderPages(ctx context.Context, r workspace.Resolver, docRel, srcPath stri
 		return "", err
 	}
 
-	args := typstArgs(r, staged.Name(), filepath.Join(outDir, "page-{n}.png"))
+	// Render through the caller's package view, exactly as a compile
+	// does. Without it the child inherited the server's store, which is
+	// keyed by namespace ID rather than name — so a document importing
+	// @acme/templates failed with "package not found", and previews
+	// worked only for @house, where the id happens to equal the name.
+	// The documents most worth previewing were the ones that could not
+	// be. Found by an agent whose org template would not render.
+	allowed, err := allowedNamespaces(ctx, store, id)
+	if err != nil {
+		return "", fmt.Errorf("resolve namespaces: %w", err)
+	}
+	view, cleanupView, err := packageView(typstDataDir(), allowed, workspaceFontPath(r))
+	if err != nil {
+		return "", fmt.Errorf("prepare packages: %w", err)
+	}
+	defer cleanupView()
+
+	args := typstArgs(r, staged.Name(), filepath.Join(outDir, "page-{n}.png"),
+		packageFontPath(view))
 	args = append([]string{args[0], "--format", "png", "--ppi", "96"}, args[1:]...)
 	cmd := exec.CommandContext(ctx, "typst", args...)
+	cmd.Env = compileEnv(view)
 	if out, runErr := cmd.CombinedOutput(); runErr != nil {
 		return "", fmt.Errorf("render pages of %s: %s", docRel, strings.TrimSpace(string(out)))
 	}

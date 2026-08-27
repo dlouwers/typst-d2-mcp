@@ -532,7 +532,7 @@ func main() {
 	)
 
 	registerTools(s, factory, store)
-	registerResources(s, factory)
+	registerResources(s, factory, store)
 
 	slog.Info("starting",
 		"version", serverVersion,

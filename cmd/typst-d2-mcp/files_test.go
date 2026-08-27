@@ -361,7 +361,7 @@ func TestDeleteFile_TakesRenderedPagesWithIt(t *testing.T) {
 	// Render, the way a caller does — by reading a page.
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = pageURIPrefix + "doc.typ/1"
-	if _, err := handleReadPage(f)(ctx, req); err != nil {
+	if _, err := handleReadPage(f, nil)(ctx, req); err != nil {
 		t.Fatalf("render pages: %v", err)
 	}
 
@@ -405,7 +405,7 @@ func TestDeleteFile_PDFDeletionKeepsPages(t *testing.T) {
 	}
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = pageURIPrefix + "doc.typ/1"
-	if _, err := handleReadPage(f)(ctx, req); err != nil {
+	if _, err := handleReadPage(f, nil)(ctx, req); err != nil {
 		t.Fatalf("render: %v", err)
 	}
 
@@ -430,7 +430,7 @@ func TestPageResource_ShrinkingADocumentDropsStalePages(t *testing.T) {
 	}
 	req := mcp.ReadResourceRequest{}
 	req.Params.URI = pageURIPrefix + "doc.typ/3"
-	if _, err := handleReadPage(f)(ctx, req); err != nil {
+	if _, err := handleReadPage(f, nil)(ctx, req); err != nil {
 		t.Fatalf("render three pages: %v", err)
 	}
 
@@ -439,7 +439,7 @@ func TestPageResource_ShrinkingADocumentDropsStalePages(t *testing.T) {
 		t.Fatalf("put_file: %s", resultText(res))
 	}
 	req.Params.URI = pageURIPrefix + "doc.typ/1"
-	if _, err := handleReadPage(f)(ctx, req); err != nil {
+	if _, err := handleReadPage(f, nil)(ctx, req); err != nil {
 		t.Fatalf("re-render: %v", err)
 	}
 
