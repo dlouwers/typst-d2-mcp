@@ -152,8 +152,29 @@ func handleDeleteFile(factory workspace.Factory) server.ToolHandlerFunc {
 		if err := os.Remove(resolved); err != nil {
 			return mcp.NewToolResultErrorFromErr("delete", err), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf(
-			"Deleted %s (%s reclaimed).", path, humanBytes(info.Size()))), nil
+		reclaimed := info.Size()
+
+		// Take the rendered pages with it. They are derived from this
+		// document and meaningless without it, and leaving them behind
+		// charged a tenant for files they could not have known about:
+		// an agent deleted four probe documents, tried to tidy up, and
+		// left ten orphaned previews it was never told existed.
+		//
+		// Only for a source document. Deleting a PDF leaves the .typ,
+		// and pages rendered from that .typ are still current.
+		var previews int
+		if strings.EqualFold(filepath.Ext(path), ".typ") {
+			if dir, resolveErr := resolver.Resolve(previewDirFor(path)); resolveErr == nil {
+				previews, reclaimed = removePreviewDir(dir, reclaimed)
+			}
+		}
+
+		msg := fmt.Sprintf("Deleted %s (%s reclaimed).", path, humanBytes(reclaimed))
+		if previews > 0 {
+			msg = fmt.Sprintf("Deleted %s and %d rendered page(s) (%s reclaimed).",
+				path, previews, humanBytes(reclaimed))
+		}
+		return mcp.NewToolResultText(msg), nil
 	}
 }
 
@@ -303,4 +324,24 @@ func firstMatchingLine(path, needle string) (string, searchResult) {
 		}
 	}
 	return "", searchNoMatch
+}
+
+// removePreviewDir deletes a document's rendered pages, returning how
+// many went and the running total of bytes reclaimed.
+func removePreviewDir(dir string, reclaimed int64) (int, int64) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, reclaimed
+	}
+	n := 0
+	for _, e := range entries {
+		if info, infoErr := e.Info(); infoErr == nil && info.Mode().IsRegular() {
+			reclaimed += info.Size()
+			n++
+		}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return 0, reclaimed
+	}
+	return n, reclaimed
 }

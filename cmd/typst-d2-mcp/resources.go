@@ -160,8 +160,7 @@ func handleReadPage(factory workspace.Factory) server.ResourceTemplateHandlerFun
 // hiding storage a caller caused is how quotas stop meaning anything.
 // delete_file reclaims them.
 func renderPages(ctx context.Context, r workspace.Resolver, docRel, srcPath string, page int) (string, error) {
-	outDir, err := r.Resolve(filepath.Join(filepath.Dir(docRel), previewDir,
-		strings.TrimSuffix(filepath.Base(docRel), filepath.Ext(docRel))))
+	outDir, err := r.Resolve(previewDirFor(docRel))
 	if err != nil {
 		return "", err
 	}
@@ -173,6 +172,13 @@ func renderPages(ctx context.Context, r workspace.Resolver, docRel, srcPath stri
 	}
 	if info, statErr := os.Stat(want); statErr == nil && info.ModTime().After(srcInfo.ModTime()) {
 		return want, nil // cached and newer than the source
+	}
+	// Clear before rendering. A document that has SHRUNK would otherwise
+	// keep a preview for a page it no longer has — charged to the
+	// tenant's budget, and reachable by a reader who would then be
+	// looking at content the document does not contain.
+	if err := os.RemoveAll(outDir); err != nil {
+		return "", fmt.Errorf("prepare previews: %w", err)
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", fmt.Errorf("prepare previews: %w", err)
@@ -261,6 +267,14 @@ func handleReadIndex(factory workspace.Factory) server.ResourceHandlerFunc {
 			URI: indexURI, MIMEType: "application/json", Text: string(payload),
 		}}, nil
 	}
+}
+
+// previewDirFor is where a document's rendered pages live, relative to
+// the workspace. One definition, because two would drift and the
+// deletion path has to find exactly what the render path wrote.
+func previewDirFor(docRel string) string {
+	return filepath.Join(filepath.Dir(docRel), previewDir,
+		strings.TrimSuffix(filepath.Base(docRel), filepath.Ext(docRel)))
 }
 
 func fileExists(p string) bool {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -344,5 +345,115 @@ func TestSearchFile_BinaryIsANonMatchNotASkip(t *testing.T) {
 	}
 	if int(got["count"].(float64)) != 0 {
 		t.Errorf("a binary file matched a content search")
+	}
+}
+
+// Deleting a document must take its rendered pages with it. An agent
+// deleted four probe documents, tried to tidy up, and left ten orphaned
+// previews charged to its byte budget in a directory it was never told
+// about.
+func TestDeleteFile_TakesRenderedPagesWithIt(t *testing.T) {
+	requireTypst(t)
+	f, ctx := fileFixture(t)
+	if res := putFile(t, ctx, f, "doc.typ", "= One\n#pagebreak()\n= Two\n"); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	// Render, the way a caller does — by reading a page.
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = pageURIPrefix + "doc.typ/1"
+	if _, err := handleReadPage(f)(ctx, req); err != nil {
+		t.Fatalf("render pages: %v", err)
+	}
+
+	resolver, err := f.Resolver(identity.Identity{UserID: "gh:4242"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPreviews, _, _ := workspace.Usage(resolver)
+
+	got := callTool(t, handleDeleteFile(f), ctx, map[string]any{"path": "doc.typ"})
+	if got.IsError {
+		t.Fatalf("delete_file: %s", resultText(got))
+	}
+	if !strings.Contains(resultText(got), "rendered page") {
+		t.Errorf("deletion did not mention the pages it removed: %s", resultText(got))
+	}
+
+	after, _, _ := workspace.Usage(resolver)
+	if after >= withPreviews {
+		t.Errorf("usage did not drop: %d then %d", withPreviews, after)
+	}
+	dir, err := resolver.Resolve(previewDirFor("doc.typ"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("the preview directory survived the document")
+	}
+}
+
+// Deleting the PDF leaves the source, and pages rendered from that
+// source are still current — so they must NOT be swept away.
+func TestDeleteFile_PDFDeletionKeepsPages(t *testing.T) {
+	requireTypst(t)
+	f, ctx := fileFixture(t)
+	if res := putFile(t, ctx, f, "doc.typ", "= One\n"); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	if res := compile(t, ctx, f, "doc.typ"); res.IsError {
+		t.Fatalf("compile: %s", resultText(res))
+	}
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = pageURIPrefix + "doc.typ/1"
+	if _, err := handleReadPage(f)(ctx, req); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if res := callTool(t, handleDeleteFile(f), ctx, map[string]any{"path": "doc.pdf"}); res.IsError {
+		t.Fatalf("delete pdf: %s", resultText(res))
+	}
+	resolver, _ := f.Resolver(identity.Identity{UserID: "gh:4242"})
+	dir, _ := resolver.Resolve(previewDirFor("doc.typ"))
+	if _, err := os.Stat(dir); err != nil {
+		t.Error("deleting the PDF removed pages that are still current")
+	}
+}
+
+// A document that shrinks must not keep a preview for a page it no
+// longer has — charged to the budget, and readable as content the
+// document does not contain.
+func TestPageResource_ShrinkingADocumentDropsStalePages(t *testing.T) {
+	requireTypst(t)
+	f, ctx := fileFixture(t)
+	if res := putFile(t, ctx, f, "doc.typ", "= One\n#pagebreak()\n= Two\n#pagebreak()\n= Three\n"); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	req := mcp.ReadResourceRequest{}
+	req.Params.URI = pageURIPrefix + "doc.typ/3"
+	if _, err := handleReadPage(f)(ctx, req); err != nil {
+		t.Fatalf("render three pages: %v", err)
+	}
+
+	// Now it is one page.
+	if res := putFile(t, ctx, f, "doc.typ", "= Only one\n"); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	req.Params.URI = pageURIPrefix + "doc.typ/1"
+	if _, err := handleReadPage(f)(ctx, req); err != nil {
+		t.Fatalf("re-render: %v", err)
+	}
+
+	resolver, _ := f.Resolver(identity.Identity{UserID: "gh:4242"})
+	dir, _ := resolver.Resolve(previewDirFor("doc.typ"))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("previews after shrinking: %v, want only page-1", names)
 	}
 }
