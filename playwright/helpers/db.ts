@@ -14,7 +14,15 @@ const STATE_DIR = process.env.E2E_STATE_DIR ?? "/tmp/typst-d2-mcp-e2e";
 const DB = `${STATE_DIR}/auth.sqlite`;
 
 function sql(statement: string): string {
-  return execFileSync("sqlite3", [DB, statement], { encoding: "utf8" });
+  // `.timeout` matters. The server under test writes to this same file
+  // while the suite reads it, and the sqlite3 CLI defaults to a zero
+  // busy timeout — so a plain SELECT fails outright with
+  // "database is locked (5)" the moment a write is in flight. That is
+  // not contention worth failing a test over; it is contention worth
+  // waiting out.
+  return execFileSync("sqlite3", ["-cmd", ".timeout 5000", DB, statement], {
+    encoding: "utf8",
+  });
 }
 
 /** Insert a user who has "signed in", returning their identity key. */
