@@ -391,7 +391,9 @@ func templateInstructions() string {
 
   If the look someone wants does not exist yet, write it once and
   publish_template it into your own namespace rather than restyling
-  each document. Everyone has a namespace, so nothing needs granting.
+  each document. Everyone has a namespace, so nothing needs granting —
+  list_templates names it, under "namespaces", flagged writable. Do not
+  guess a namespace name; the one that is yours is listed there.
 
     #import "@%[1]s/%[2]s:%[3]s": report, adr
 
@@ -1101,6 +1103,10 @@ documents from different people, written at different times, come out
 looking the same. Call this before writing any #set or #show rules.
 
 No arguments; returns JSON:
+  - namespaces[]: every namespace you can reach, including ones with
+    nothing in them yet. "writable" marks the ones you may publish to
+    with publish_template — normally your own. This is where you find
+    your own namespace's name; do not guess it.
   - templates[]: namespace, name, version, and the exact "import" string
     to use, plus "exports" — the functions that package offers.
   - builtin: true for the server's house templates, available to
