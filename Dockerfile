@@ -70,7 +70,7 @@ ARG TYPST_VERSION=v0.14.2
 # workspace fonts/ directory, where the licensing stays with the tenant.
 RUN apt-get update \
  && apt-get install --no-install-recommends -y \
-      ca-certificates curl tini xz-utils \
+      ca-certificates curl tini xz-utils unzip \
       fonts-dejavu-core fonts-liberation2 \
  && rm -rf /var/lib/apt/lists/*
 
@@ -85,6 +85,21 @@ RUN curl -fsSL "https://github.com/terrastruct/d2/releases/download/${D2_VERSION
 RUN curl -fsSL "https://github.com/typst/typst/releases/download/${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz" \
       | tar -xJ -C /usr/local/bin --strip-components=1 \
  && typst --version
+
+# A curated set of open-licensed typefaces, so a document has something
+# to be set in beyond the four faces typst embeds. See the script for
+# why these families and why statics over variable builds; the short
+# version is that a family must be callable by the name people write.
+#
+# Versions are pinned and archives fetched directly — not an install
+# script resolving "latest", which is the mistake #103 was about.
+ARG FONT_INTER=4.1
+ARG FONT_SOURCE_SERIF=4.005R
+ARG FONT_SOURCE_SANS=3.052R
+ARG FONT_JETBRAINS_MONO=2.304
+COPY fonts/manifest.json /usr/local/share/typst-d2/fonts/manifest.json
+COPY scripts/install-fonts.sh /tmp/install-fonts.sh
+RUN sh /tmp/install-fonts.sh && rm /tmp/install-fonts.sh
 
 # House document templates, resolved by typst as `@house/templates:0.1.0`.
 #

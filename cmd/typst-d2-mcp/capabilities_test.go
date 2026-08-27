@@ -52,8 +52,8 @@ func TestWorkspaceInfo_ReportsCapabilities(t *testing.T) {
 	if _, err := exec.LookPath("d2"); err == nil && info.D2Version == "" {
 		t.Error("d2_version not reported")
 	}
-	if len(info.FontFamilies) == 0 {
-		t.Fatal("font_families not reported")
+	if info.FontCount == 0 {
+		t.Fatal("no fonts reported as available")
 	}
 	if info.FontsDir != FontsDir {
 		t.Errorf("fonts_dir = %q, want %q", info.FontsDir, FontsDir)
