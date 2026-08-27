@@ -79,20 +79,43 @@ func TestGetFile_BinaryNeedsBase64(t *testing.T) {
 	}
 }
 
-// A PDF pulled through a tool call is the wrong move; point at the
-// resource URI rather than filling the caller's context.
-func TestGetFile_LargeFileRefusedWithAPointer(t *testing.T) {
+// Artefacts belong on the resource side whatever their size — the
+// client streams them to a file, so they cost the caller no context.
+// Refusing only when a file happens to be large would send a small PDF
+// through the worse mechanism for no reason.
+func TestGetFile_ArtefactsGoToResourcesRegardlessOfSize(t *testing.T) {
 	f, ctx := fileFixture(t)
-	big := strings.Repeat("x", maxGetFileBytes+1)
-	if res := putFile(t, ctx, f, "big.pdf", big); res.IsError {
+	if res := putFile(t, ctx, f, "tiny.pdf", "not really a pdf"); res.IsError {
 		t.Fatalf("put_file: %s", resultText(res))
 	}
-	got := callTool(t, handleGetFile(f), ctx, map[string]any{"path": "big.pdf"})
+	got := callTool(t, handleGetFile(f), ctx, map[string]any{"path": "tiny.pdf"})
+	if !got.IsError {
+		t.Fatal("a small PDF was returned inline rather than pointed at a resource")
+	}
+	msg := resultText(got)
+	for _, want := range []string{"resources/read", pdfURIPrefix, pageURIPrefix} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("refusal missing %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "at most") {
+		t.Errorf("refusal justified by size rather than purpose:\n%s", msg)
+	}
+}
+
+// Source over the cap is still a size refusal, and points at the
+// source resource rather than at a PDF.
+func TestGetFile_LargeSourcePointsAtTheSourceResource(t *testing.T) {
+	f, ctx := fileFixture(t)
+	if res := putFile(t, ctx, f, "big.typ", strings.Repeat("x", maxGetFileBytes+1)); res.IsError {
+		t.Fatalf("put_file: %s", resultText(res))
+	}
+	got := callTool(t, handleGetFile(f), ctx, map[string]any{"path": "big.typ"})
 	if !got.IsError {
 		t.Fatal("a file over the cap was returned inline")
 	}
-	if !strings.Contains(resultText(got), "resources/read") {
-		t.Errorf("refusal does not point at the right mechanism: %s", resultText(got))
+	if !strings.Contains(resultText(got), sourceURIPrefix) {
+		t.Errorf("refusal does not point at the source resource: %s", resultText(got))
 	}
 }
 
@@ -240,5 +263,20 @@ func TestFileVerbs_ArePerTenant(t *testing.T) {
 	got := decodeSearch(t, callTool(t, handleSearchFile(f), other, map[string]any{}))
 	if n := int(got["count"].(float64)); n != 0 {
 		t.Errorf("another tenant's search returned %d of my files", n)
+	}
+}
+
+// A PNG the caller pushed is their asset, not a rendered artefact.
+// Refusing it would be telling someone their own logo belongs on the
+// resource side.
+func TestGetFile_UploadedImagesAreNotArtefacts(t *testing.T) {
+	if uri, isArtefact := artefactURI("assets/logo.png"); isArtefact {
+		t.Errorf("an uploaded PNG was classed as an artefact (%s)", uri)
+	}
+	if _, isArtefact := artefactURI("docs/" + previewDir + "/report/page-1.png"); !isArtefact {
+		t.Error("a rendered page was not classed as an artefact")
+	}
+	if _, isArtefact := artefactURI("report.pdf"); !isArtefact {
+		t.Error("a PDF was not classed as an artefact")
 	}
 }
