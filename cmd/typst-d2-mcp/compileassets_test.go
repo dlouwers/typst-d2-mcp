@@ -68,7 +68,7 @@ func TestCompile_WorkspaceAssetIsReferenceable(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("compile failed: %s", resultText(res))
 	}
-	assertPDF(t, filepath.Join(root, "user123", "doc.pdf"))
+	assertPDF(t, filepath.Join(root, workspace.DirName("user123"), "doc.pdf"))
 }
 
 // Same for a raster asset, which travels through put_file as base64.
@@ -102,7 +102,7 @@ func TestCompile_WorkspaceRasterAssetIsReferenceable(t *testing.T) {
 	if res := compile(t, ctx, factory, "doc.typ"); res.IsError {
 		t.Fatalf("compile failed: %s", resultText(res))
 	}
-	assertPDF(t, filepath.Join(root, "user123", "doc.pdf"))
+	assertPDF(t, filepath.Join(root, workspace.DirName("user123"), "doc.pdf"))
 }
 
 // A relative #import of another workspace file must resolve too — the
@@ -126,7 +126,7 @@ func TestCompile_WorkspaceImportResolves(t *testing.T) {
 	if res := compile(t, ctx, factory, "doc.typ"); res.IsError {
 		t.Fatalf("compile failed: %s", resultText(res))
 	}
-	assertPDF(t, filepath.Join(root, "user123", "doc.pdf"))
+	assertPDF(t, filepath.Join(root, workspace.DirName("user123"), "doc.pdf"))
 }
 
 // An asset in a subdirectory, referenced both relatively and from the
@@ -151,7 +151,7 @@ func TestCompile_AssetInSubdirectory(t *testing.T) {
 	if res := compile(t, ctx, factory, "docs/doc.typ"); res.IsError {
 		t.Fatalf("compile failed: %s", resultText(res))
 	}
-	assertPDF(t, filepath.Join(root, "user123", "docs", "doc.pdf"))
+	assertPDF(t, filepath.Join(root, workspace.DirName("user123"), "docs", "doc.pdf"))
 }
 
 // Moving the compile root into the workspace must not open a way out of
@@ -245,7 +245,7 @@ func TestCompile_D2StillPreprocessed(t *testing.T) {
 	if res := compile(t, ctx, factory, "doc.typ"); res.IsError {
 		t.Fatalf("compile failed: %s", resultText(res))
 	}
-	assertPDF(t, filepath.Join(root, "user123", "doc.pdf"))
+	assertPDF(t, filepath.Join(root, workspace.DirName("user123"), "doc.pdf"))
 }
 
 // The staged source is server scratch: it must be gone once the compile
@@ -264,7 +264,7 @@ func TestCompile_StagedFileIsCleanedUp(t *testing.T) {
 		t.Fatalf("compile failed: %s", resultText(res))
 	}
 
-	entries, err := os.ReadDir(filepath.Join(root, "user123"))
+	entries, err := os.ReadDir(filepath.Join(root, workspace.DirName("user123")))
 	if err != nil {
 		t.Fatal(err)
 	}

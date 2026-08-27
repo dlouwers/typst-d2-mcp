@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,18 +181,15 @@ func familiesUnder(dir string) []string {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return nil
 	}
-	// #107, again. typst splits --font-path on the list separator, and a
-	// tenant directory is gh:<id> — so probing it directly reads
-	// nothing and reports the tenant has no fonts. The compile path
-	// solves this by routing through the package view; a probe has no
-	// view, so it borrows a colon-free name for the duration.
+	// workspace.DirName guarantees tenant paths carry no list separator,
+	// so a path can simply be named. This is the assertion that the
+	// guarantee holds: an unsafe path is refused LOUDLY rather than
+	// quietly returning nothing. Silence was the actual harm in #107 —
+	// the fonts were missing and everything said they were fine.
 	if !safeFontPath(dir) {
-		linked, cleanup, err := linkColonFree(dir)
-		if err != nil {
-			return nil
-		}
-		defer cleanup()
-		dir = linked
+		slog.Error("refusing to probe a font path containing the list separator; "+
+			"typst would read nothing from it", "path", dir)
+		return nil
 	}
 	out, err := runProbe("typst", "fonts", "--font-path", dir,
 		"--ignore-system-fonts", "--ignore-embedded-fonts")
@@ -218,21 +216,4 @@ func nonEmptyLines(s string) []string {
 		}
 	}
 	return out
-}
-
-// linkColonFree gives a directory a name typst can be told about,
-// returning the safe path and a cleanup. The link target may contain
-// anything; only the argument on the command line has to be clean.
-func linkColonFree(dir string) (string, func(), error) {
-	tmp, err := os.MkdirTemp("", "typst-d2-fontprobe-*")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() { _ = os.RemoveAll(tmp) }
-	link := filepath.Join(tmp, "fonts")
-	if err := os.Symlink(dir, link); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return link, cleanup, nil
 }

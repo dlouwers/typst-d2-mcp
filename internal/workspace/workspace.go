@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -226,7 +227,44 @@ func (f TenantFactory) Resolver(id identity.Identity) (Resolver, error) {
 	if id.UserID == "" {
 		return nil, fmt.Errorf("tenant factory requires non-empty UserID")
 	}
-	return NewScopedFS(filepath.Join(f.Root, id.UserID))
+	dir := filepath.Join(f.Root, DirName(id.UserID))
+	// A workspace created before DirName existed sits under the raw user
+	// id. Move it once, rather than leaving the old path to be found by
+	// some code paths and not others.
+	if err := migrateLegacyDir(filepath.Join(f.Root, id.UserID), dir); err != nil {
+		return nil, err
+	}
+	return NewScopedFS(dir)
+}
+
+// migrateLegacyDir renames a pre-DirName workspace into place.
+//
+// Idempotent and safe to race: two servers starting together may both
+// try, and the loser sees the destination already exists, which is the
+// correct outcome rather than an error. If both exist — a half-finished
+// move, or something hand-made — the new one wins and the old is left
+// alone for a person to look at, because silently merging two
+// directories of someone's documents is not a decision code should make.
+func migrateLegacyDir(legacy, current string) error {
+	if legacy == current {
+		return nil
+	}
+	if _, err := os.Stat(current); err == nil {
+		return nil // already migrated, or never needed
+	}
+	info, err := os.Stat(legacy)
+	if err != nil || !info.IsDir() {
+		return nil //nolint:nilerr // nothing to migrate is the normal case
+	}
+	if err := os.Rename(legacy, current); err != nil {
+		if _, statErr := os.Stat(current); statErr == nil {
+			return nil // someone else won the race
+		}
+		return fmt.Errorf("migrate workspace %s: %w", legacy, err)
+	}
+	slog.Info("migrated a workspace to a path-safe directory name",
+		"from", filepath.Base(legacy), "to", filepath.Base(current))
+	return nil
 }
 
 // WriteFile resolves path through r and writes content, creating parent

@@ -31,7 +31,7 @@ func newDownloadFixture(t *testing.T) (http.Handler, *authdb.Store, string) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	root := t.TempDir()
-	userDir := filepath.Join(root, "gh:1")
+	userDir := filepath.Join(root, workspace.DirName("gh:1"))
 	if err := os.MkdirAll(userDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
