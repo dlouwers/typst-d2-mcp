@@ -329,7 +329,7 @@ func TestCompile_TemplateAssetResolves(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("a template could not read its own bundled asset: %s", resultText(res))
 	}
-	assertPDF(t, filepath.Join(root, "user123", "doc.pdf"))
+	assertPDF(t, filepath.Join(root, workspace.DirName("user123"), "doc.pdf"))
 }
 
 // The same, for a template reached through organisation membership
@@ -374,7 +374,7 @@ func TestCompile_OrgTemplateAssetResolves(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("an org template could not read its own asset: %s", resultText(res))
 	}
-	assertPDF(t, filepath.Join(root, member.UserID, "doc.pdf"))
+	assertPDF(t, filepath.Join(root, workspace.DirName(member.UserID), "doc.pdf"))
 }
 
 // The package view is a font path, so a template can ship the typeface
@@ -579,7 +579,7 @@ func TestCompile_ANameOnlyReachesItsOwnNamespace(t *testing.T) {
 // in it.
 func TestTypstArgs_NeverPassesAColonInAFontPath(t *testing.T) {
 	root := t.TempDir()
-	tenant := filepath.Join(root, "gh:4242")
+	tenant := filepath.Join(root, workspace.DirName("gh:4242"))
 	if err := os.MkdirAll(filepath.Join(tenant, FontsDir), 0o755); err != nil {
 		t.Fatal(err)
 	}

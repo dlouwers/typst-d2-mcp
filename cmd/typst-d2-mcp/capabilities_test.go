@@ -93,7 +93,7 @@ func TestRenderEnvironment_HasProportionalSans(t *testing.T) {
 // so naming that path directly was silently discarded (#107).
 func TestTypstArgs_WorkspaceFontsReachTypstViaTheView(t *testing.T) {
 	root := t.TempDir()
-	tenant := filepath.Join(root, "gh:4242")
+	tenant := filepath.Join(root, workspace.DirName("gh:4242"))
 	fonts := filepath.Join(tenant, FontsDir)
 	if err := os.MkdirAll(fonts, 0o755); err != nil {
 		t.Fatal(err)

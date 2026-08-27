@@ -156,41 +156,33 @@ func TestSearchFonts_EmptyResultIsActionable(t *testing.T) {
 	}
 }
 
-// #107 came back in new code, and this is the guard. A tenant path
-// contains a colon; typst splits --font-path on it and reads nothing,
-// so probing a tenant's font directory directly reported that they had
-// no fonts. Caught by a skipping test, which is exactly how the
-// original hid for a day.
-func TestFamiliesUnder_SurvivesAColonInThePath(t *testing.T) {
-	requireTypst(t)
-	src := findSystemFont(t)
-
+// #107's root cause is gone: workspace.DirName means a tenant path
+// cannot contain the list separator, so nothing downstream has to
+// compensate for one. What remains is the assertion that the guarantee
+// holds — an unsafe path is refused loudly rather than quietly
+// returning nothing, because silence was the actual harm.
+func TestFontPaths_CannotContainTheListSeparator(t *testing.T) {
 	root := t.TempDir()
-	colon := filepath.Join(root, "gh:4242", "fonts")
-	if err := os.MkdirAll(colon, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(src)
+	f := workspace.TenantFactory{Root: root}
+	r, err := f.Resolver(identity.Identity{UserID: "gh:4242"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(colon, filepath.Base(src)), raw, 0o644); err != nil {
-		t.Fatal(err)
+	b, ok := r.(workspace.Bounded)
+	if !ok {
+		t.Fatal("tenant resolver is not bounded")
+	}
+	if !safeFontPath(b.WorkspaceRoot()) {
+		t.Errorf("a tenant workspace root still contains the list separator: %s", b.WorkspaceRoot())
+	}
+	if !safeFontPath(workspaceFontPath(r)) && workspaceFontPath(r) != "" {
+		t.Errorf("a tenant font path still contains the list separator: %s", workspaceFontPath(r))
 	}
 
-	if got := familiesUnder(colon); len(got) == 0 {
-		t.Error("a font directory whose path contains a colon reported no families")
-	}
-
-	plain := filepath.Join(root, "plain")
-	if err := os.MkdirAll(plain, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(plain, filepath.Base(src)), raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if a, b := familiesUnder(colon), familiesUnder(plain); len(a) != len(b) {
-		t.Errorf("colon path found %d families, colon-free found %d — must agree", len(a), len(b))
+	// And the probe refuses an unsafe path rather than reporting no
+	// fonts, which is what made the original undiagnosable.
+	if got := familiesUnder("/tmp/has:colon"); got != nil {
+		t.Errorf("an unsafe path was probed rather than refused: %v", got)
 	}
 }
 
