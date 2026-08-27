@@ -131,7 +131,7 @@ func handlePublishTemplate(factory workspace.Factory, store *authdb.Store) serve
 				namespace, pkgName, version)), nil
 		}
 
-		if err := compileCheck(ctx, store, id, srcDir, files,
+		if err := compileCheck(ctx, store, id, resolver, srcDir, files,
 			namespace, nsID, pkgName, version); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf(
 				"the template did not compile, so it was not published:\n\n%s", err.Error())), nil
@@ -254,6 +254,7 @@ func compileCheck(
 	ctx context.Context,
 	store *authdb.Store,
 	id identity.Identity,
+	resolver workspace.Resolver,
 	srcDir string,
 	files []string,
 	nsName, nsID, pkgName, version string,
@@ -279,7 +280,7 @@ func compileCheck(
 	if err != nil {
 		return fmt.Errorf("resolve namespaces for the check: %w", err)
 	}
-	view, cleanupView, err := packageView(typstDataDir(), allowed)
+	view, cleanupView, err := packageView(typstDataDir(), allowed, workspaceFontPath(resolver))
 	if err != nil {
 		return fmt.Errorf("stage package: %w", err)
 	}
