@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
@@ -127,5 +128,54 @@ func TestHandleWorkspaceInfo_AvailableFlooredAtZero(t *testing.T) {
 	info := callWorkspaceInfo(t, ctx, factory)
 	if info.AvailableBytes == nil || *info.AvailableBytes != 0 {
 		t.Fatalf("available_bytes = %v, want 0 (floored)", info.AvailableBytes)
+	}
+}
+
+// The most repeated failure in the agent research: the workspace is
+// treated as the filesystem the caller is standing on. Agents shelled
+// out to confirm a write, tried to cat a path a tool had just returned,
+// and planned around ls. A local check reports the file missing, which
+// reads as "my write failed" rather than "I am looking on the wrong
+// machine" — so the work gets redone, or the server gets blamed.
+//
+// Nothing in the tool surface said otherwise. workspace_info is where a
+// caller orients, so it is where this has to be said.
+func TestHandleWorkspaceInfo_SaysWhereTheFilesAre(t *testing.T) {
+	root := t.TempDir()
+	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "user123"})
+	scoped := callWorkspaceInfo(t, ctx, workspace.TenantFactory{Root: root})
+
+	if scoped.Location != "server" {
+		t.Errorf("scoped location = %q, want %q", scoped.Location, "server")
+	}
+	// The sentence has to name the mistake, not merely the fact — an
+	// agent that reads "server-owned" and still runs `ls` has been told
+	// nothing useful.
+	for _, want := range []string{"only way", "get_file"} {
+		if !strings.Contains(scoped.Access, want) {
+			t.Errorf("scoped access note does not mention %q: %s", want, scoped.Access)
+		}
+	}
+
+	local := callWorkspaceInfo(t, context.Background(), workspace.LocalFactory{})
+	if local.Location != "local" {
+		t.Errorf("local location = %q, want %q", local.Location, "local")
+	}
+	if local.Access == "" {
+		t.Error("local access note is empty; silence is what caused the confusion")
+	}
+	if strings.Contains(local.Access, "only way") {
+		t.Errorf("local mode claims the tools are the only route, which is false: %s", local.Access)
+	}
+}
+
+// The instruction block is read every session and said nothing about
+// this, so an agent that never calls workspace_info learned it the
+// expensive way.
+func TestServerInstructions_WarnAboutTheRemoteWorkspace(t *testing.T) {
+	for _, want := range []string{"workspace_info", "shell out", "location \"server\""} {
+		if !strings.Contains(serverInstructions, want) {
+			t.Errorf("server instructions do not mention %q", want)
+		}
 	}
 }
