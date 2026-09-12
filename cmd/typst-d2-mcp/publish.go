@@ -374,9 +374,12 @@ func runTypst(ctx context.Context, workDir, dataHome, file, content string) (str
 	// The check must see fonts the way a real compile does: a template
 	// may ship the typeface it is designed in, and validating it
 	// without that would reject it for a font it actually carries.
-	// Same discrepancy as #115, one axis over.
-	cmd := exec.CommandContext(ctx, "typst", "compile",
-		"--font-path", dataHome, in, out)
+	// Same discrepancy as #115, one axis over. fontArgs is how that
+	// stays true — it is the same set every other compile gets, so a
+	// template designed in a bundled family validates here rather than
+	// failing a check no real compile would apply (#144).
+	args := append([]string{"compile"}, fontArgs(dataHome)...)
+	cmd := exec.CommandContext(ctx, "typst", append(args, in, out)...)
 	cmd.Env = compileEnv(dataHome)
 	combined, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(combined)), err

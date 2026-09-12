@@ -33,8 +33,13 @@ import (
 // thing and typst doing another (#107), so agreement is built in rather
 // than maintained.
 
-// fontsDirName is where the image keeps the collection it ships.
-const bundledFontsPath = "/usr/local/share/typst-d2/fonts"
+// bundledFontsPath is where the image keeps the collection it ships.
+// Both halves of the system read it: fontArgs names it on every typst
+// command line, and collectFonts attributes families to it. A var
+// rather than a const so a test can seed a directory and prove the two
+// halves agree — which is the only thing that would have caught #144
+// off the image.
+var bundledFontsPath = "/usr/local/share/typst-d2/fonts"
 
 // fontFace is one family, and where it comes from.
 type fontFace struct {
