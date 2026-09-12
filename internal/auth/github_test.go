@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -279,16 +280,202 @@ func TestGitHub_Callback_AllowlistRejection(t *testing.T) {
 
 	cbResp := httptest.NewRecorder()
 	g.ServeCallback(cbResp, httptest.NewRequest(http.MethodGet, pathGitHubCallback+"?code=code-xyz&state="+sid, nil))
-	if cbResp.Code != http.StatusFound {
-		t.Fatalf("callback status = %d, want 302", cbResp.Code)
+
+	// An invite-only deployment explains itself rather than bouncing
+	// silently (#142). The protocol outcome is unchanged — it is
+	// carried by the link, and TestGitHub_Callback_RefusalPage* below
+	// follow it.
+	if cbResp.Code != http.StatusOK {
+		t.Fatalf("callback status = %d, want 200 with an explanation", cbResp.Code)
 	}
-	cbLoc, _ := url.Parse(cbResp.Header().Get("Location"))
-	if got := cbLoc.Query().Get("error"); got != "access_denied" {
-		t.Errorf("callback error = %q, want access_denied", got)
+	if got := cbResp.Header().Get("Location"); got != "" {
+		t.Errorf("refused account was redirected to %q instead of being told why", got)
 	}
-	if cbLoc.Query().Get("code") != "" {
+	body := cbResp.Body.String()
+	if !strings.Contains(body, "access_denied") {
+		t.Error("the page does not carry the access_denied outcome onward")
+	}
+	if strings.Contains(body, "?code=") {
 		t.Error("non-allowlisted user must not receive an authorization code")
 	}
+}
+
+// The page has to answer the three questions the person actually has:
+// who was refused, by what, and what to do about it. The user in the
+// report had none of them and concluded GitHub was down.
+func TestGitHub_Callback_RefusalPageSaysWhoWhereAndWhatNext(t *testing.T) {
+	body, _ := refusedCallback(t, "octocat", "https://localhost/cb", "cs")
+
+	// Collapsed, because the assertions are about the sentence a person
+	// reads, not about where the template happens to wrap.
+	text := strings.Join(strings.Fields(body), " ")
+	for _, want := range []string{
+		"octocat",          // who
+		"mcp.example.test", // where — from PublicURL, not a generic "this server"
+		"invite",           // what to do
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("refusal page does not mention %q:\n%s", want, body)
+		}
+	}
+	// And it must not send them round the loop that wasted five hours.
+	if !strings.Contains(text, "signing in again will not change the outcome") {
+		t.Error("the page does not say that retrying is pointless")
+	}
+}
+
+// Continuing from the page must deliver exactly what the bare redirect
+// used to: same error, same description, same state. The human being
+// told why cannot change what the client observes.
+func TestGitHub_Callback_RefusalPageContinuesTheProtocol(t *testing.T) {
+	body, _ := refusedCallback(t, "octocat", "https://localhost/cb", "client-state-123")
+
+	href := hrefIn(t, body)
+	u, err := url.Parse(href)
+	if err != nil {
+		t.Fatalf("continue link is not a URL: %q", href)
+	}
+	if got := u.Scheme + "://" + u.Host + u.Path; got != "https://localhost/cb" {
+		t.Errorf("continue link points at %q, want the client's redirect_uri", got)
+	}
+	if got := u.Query().Get("error"); got != "access_denied" {
+		t.Errorf("continue link error = %q, want access_denied", got)
+	}
+	if got := u.Query().Get("state"); got != "client-state-123" {
+		t.Errorf("continue link state = %q, want the original client state", got)
+	}
+	if u.Query().Get("error_description") == "" {
+		t.Error("continue link drops the description the server took care to write")
+	}
+}
+
+// A custom-scheme callback is normal for an MCP client, and
+// html/template rewrites unknown schemes to "#ZgotmplZ" unless the URL
+// is marked trusted. If that ever regresses, the link silently stops
+// working and the page becomes a dead end — worse than the redirect it
+// replaced.
+func TestGitHub_Callback_RefusalPageKeepsACustomScheme(t *testing.T) {
+	body, _ := refusedCallback(t, "octocat", "cursor://anysphere.cursor-retrieval/oauth/cb", "cs")
+	if strings.Contains(body, "ZgotmplZ") {
+		t.Fatalf("html/template filtered the continue link:\n%s", body)
+	}
+	if href := hrefIn(t, body); !strings.HasPrefix(href, "cursor://") {
+		t.Errorf("continue link = %q, want the custom-scheme redirect_uri", href)
+	}
+}
+
+// The login is rendered as text, so a hostile GitHub display name
+// cannot become markup on our domain.
+func TestGitHub_Callback_RefusalPageEscapesTheLogin(t *testing.T) {
+	body, _ := refusedCallback(t, "<script>alert(1)</script>", "https://localhost/cb", "cs")
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Error("the refused login was rendered as markup")
+	}
+	if !strings.Contains(body, "&lt;script&gt;") {
+		t.Error("the refused login does not appear at all, escaped or otherwise")
+	}
+}
+
+// An open deployment is unaffected. Nobody is refused there, so the
+// page cannot appear — an uninvited stranger is admitted and gets an
+// authorization code exactly as before.
+//
+// The remaining way to be refused on an open deployment is the invite
+// lookup failing and loginAllowed failing closed. That is a server
+// fault rather than a decision about the person, so it keeps the plain
+// redirect: "ask for an invite" would send them somewhere that cannot
+// help. That branch is guarded by the InviteOnly() check in
+// ServeCallback rather than by a test, because the callback reads the
+// session from the same store, so a store broken enough to fail the
+// invite lookup never reaches the allowlist at all.
+func TestGitHub_Callback_OpenDeploymentAdmitsAndDoesNotExplain(t *testing.T) {
+	ts := fakeGitHub(t, "code-xyz", "gh-token", "stranger", 77, "s@example.com")
+	defer ts.Close()
+	g := newGitHubBackend(t, ts.URL)
+	if g.InviteOnly() {
+		t.Fatal("fixture is invite-only; this test needs an open deployment")
+	}
+
+	c, err := g.Store.RegisterClient(t.Context(), "x", []string{"https://localhost/cb"}, "none")
+	if err != nil {
+		t.Fatalf("RegisterClient: %v", err)
+	}
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", c.ClientID)
+	q.Set("redirect_uri", "https://localhost/cb")
+	q.Set("state", "cs")
+	q.Set("code_challenge", "irrelevant-for-this-test")
+	q.Set("code_challenge_method", "S256")
+	azResp := httptest.NewRecorder()
+	g.ServeAuthorize(azResp, httptest.NewRequest(http.MethodGet, pathAuthorize+"?"+q.Encode(), nil))
+	loc, _ := url.Parse(azResp.Header().Get("Location"))
+
+	cbResp := httptest.NewRecorder()
+	g.ServeCallback(cbResp, httptest.NewRequest(http.MethodGet,
+		pathGitHubCallback+"?code=code-xyz&state="+loc.Query().Get("state"), nil))
+	if cbResp.Code != http.StatusFound {
+		t.Fatalf("open deployment status = %d, want 302: %s", cbResp.Code, cbResp.Body.String())
+	}
+	cbLoc, _ := url.Parse(cbResp.Header().Get("Location"))
+	if cbLoc.Query().Get("code") == "" {
+		t.Error("an open deployment refused a stranger")
+	}
+}
+
+// refusedCallback drives authorize → GitHub callback for an account
+// that is not on the allowlist, and returns the response body and
+// recorder.
+func refusedCallback(t *testing.T, login, redirectURI, clientState string) (string, *httptest.ResponseRecorder) {
+	t.Helper()
+	ts := fakeGitHub(t, "code-xyz", "gh-token", login, 42, "o@example.com")
+	t.Cleanup(ts.Close)
+	g := newGitHubBackend(t, ts.URL)
+	g.Cfg.AllowedLogins = map[string]bool{"someoneelse": true}
+	g.Cfg.PublicURL = "https://mcp.example.test"
+
+	c, err := g.Store.RegisterClient(t.Context(), "x", []string{redirectURI}, "none")
+	if err != nil {
+		t.Fatalf("RegisterClient: %v", err)
+	}
+	q := url.Values{}
+	q.Set("response_type", "code")
+	q.Set("client_id", c.ClientID)
+	q.Set("redirect_uri", redirectURI)
+	q.Set("state", clientState)
+	q.Set("code_challenge", "irrelevant-for-this-test")
+	q.Set("code_challenge_method", "S256")
+	azResp := httptest.NewRecorder()
+	g.ServeAuthorize(azResp, httptest.NewRequest(http.MethodGet, pathAuthorize+"?"+q.Encode(), nil))
+	loc, err := url.Parse(azResp.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("authorize did not redirect to GitHub: %v", err)
+	}
+	sid := loc.Query().Get("state")
+
+	cbResp := httptest.NewRecorder()
+	g.ServeCallback(cbResp, httptest.NewRequest(http.MethodGet,
+		pathGitHubCallback+"?code=code-xyz&state="+sid, nil))
+	if cbResp.Code != http.StatusOK {
+		t.Fatalf("callback status = %d, want 200: %s", cbResp.Code, cbResp.Body.String())
+	}
+	return cbResp.Body.String(), cbResp
+}
+
+// hrefIn pulls the single link out of the refusal page.
+func hrefIn(t *testing.T, body string) string {
+	t.Helper()
+	const marker = `href="`
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatalf("no link on the page:\n%s", body)
+	}
+	rest := body[i+len(marker):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("unterminated href:\n%s", body)
+	}
+	return html.UnescapeString(rest[:j])
 }
 
 // TestOAuth_FullRoundTrip walks the full MCP-spec OAuth dance against

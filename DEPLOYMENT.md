@@ -146,6 +146,16 @@ Two consequences worth planning for:
 - An admin login is always allowed, invited or not, so an empty invites
   table can never lock the operator out of their own server.
 
+**What a refused person sees.** On an invite-only deployment, an account
+that is not invited gets an HTML page naming the account, naming this
+deployment, and saying to ask for an invite — then a link that carries
+the OAuth `access_denied` back to the client. The MCP client still sees
+a failed authorisation, because it discards the `error_description` we
+send and shows its own generic message; the page exists because that
+message leaves the person with no idea which of the two deployments
+refused them, or that an invite is the answer. Expect the support
+request to arrive as "please invite me" rather than "it is broken".
+
 **Sessions.** Admins log in through the same GitHub OAuth app as the MCP
 flow (the two are told apart by the OAuth `state`), and get a signed
 cookie: `HttpOnly`, `Secure` when `TYPST_D2_MCP_PUBLIC_URL` is https,

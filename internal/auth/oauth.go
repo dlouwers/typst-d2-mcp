@@ -323,10 +323,24 @@ func oauthError(w http.ResponseWriter, status int, code, description string) {
 // RFC 6749 §4.1.2.1. The MCP client surfaces the error to its
 // user — we don't render anything ourselves.
 func redirectOAuthError(w http.ResponseWriter, r *http.Request, redirectURI, state, code, description string) {
-	u, err := url.Parse(redirectURI)
+	target, err := oauthErrorURL(redirectURI, state, code, description)
 	if err != nil {
 		http.Error(w, description, http.StatusBadRequest)
 		return
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
+// oauthErrorURL builds the client's redirect_uri carrying an OAuth
+// error. Split out from redirectOAuthError because the refusal page
+// (refusal.go) offers the same destination as a link the person
+// follows themselves, and the two must not drift: what the client
+// eventually observes has to be identical whether the human was shown
+// an explanation on the way or not.
+func oauthErrorURL(redirectURI, state, code, description string) (string, error) {
+	u, err := url.Parse(redirectURI)
+	if err != nil {
+		return "", err
 	}
 	q := u.Query()
 	q.Set("error", code)
@@ -337,7 +351,7 @@ func redirectOAuthError(w http.ResponseWriter, r *http.Request, redirectURI, sta
 		q.Set("state", state)
 	}
 	u.RawQuery = q.Encode()
-	http.Redirect(w, r, u.String(), http.StatusFound)
+	return u.String(), nil
 }
 
 // Silence unused-import linter for symbols only touched in tests.
