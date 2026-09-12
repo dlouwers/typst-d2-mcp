@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
 	"github.com/dlouwers/typst-d2-mcp/internal/workspace"
@@ -158,10 +160,16 @@ func TestWorkspaceFontPath_UnboundedIsEmpty(t *testing.T) {
 // End to end: push a font, name it, compile. The warning path matters
 // as much as the success — typst exits 0 on an unknown family, and
 // those warnings are the only signal a caller gets.
+//
+// The face carries a family name that exists nowhere else (#149). With
+// an ordinary system font this test passed with every font path
+// removed from the compile, because typst found the face on its own —
+// it asserted that the server does not BREAK font resolution, never
+// that the server provides it.
 func TestCompile_WorkspaceFontIsUsable(t *testing.T) {
 	requireTypst(t)
 
-	src := findSystemFont(t)
+	family, src := uniqueFamilyFont(t, t.TempDir())
 	root := t.TempDir()
 	factory := workspace.TenantFactory{Root: root}
 	ctx := identity.WithIdentity(context.Background(), identity.Identity{UserID: "gh:4242"})
@@ -199,8 +207,8 @@ func TestCompile_WorkspaceFontIsUsable(t *testing.T) {
 	// prove nothing when the face is also installed system-wide, which
 	// it usually is on a machine with any fonts at all.
 	own := familiesFromPathOnly(t, fontPath)
-	if len(own) == 0 {
-		t.Fatalf("typst read no families from the pushed font at %s", fontPath)
+	if !contains(own, family) {
+		t.Fatalf("typst read %v from the pushed font at %s, want %s", own, fontPath, family)
 	}
 
 	// And the workspace's full list must include them.
@@ -214,7 +222,7 @@ func TestCompile_WorkspaceFontIsUsable(t *testing.T) {
 	// Finally, a document setting that family must compile without an
 	// unknown-family warning.
 	if res := putFile(t, ctx, factory, "doc.typ",
-		"#set text(font: \""+own[0]+"\")\n= Title\nBody.\n"); res.IsError {
+		"#set text(font: \""+family+"\")\n= Title\nBody.\n"); res.IsError {
 		t.Fatalf("put_file doc: %s", resultText(res))
 	}
 	res = compile(t, ctx, factory, "doc.typ")
@@ -222,8 +230,83 @@ func TestCompile_WorkspaceFontIsUsable(t *testing.T) {
 		t.Fatalf("compile failed: %s", resultText(res))
 	}
 	if got := resultText(res); strings.Contains(strings.ToLower(got), "unknown font family") {
-		t.Errorf("pushed font %q was not resolved:\n%s", own[0], got)
+		t.Errorf("pushed font %q was not resolved:\n%s", family, got)
 	}
+}
+
+// uniqueFamilyFont writes a face into dir whose family name exists
+// nowhere else on this machine, and returns that name.
+//
+// A stand-in copied straight from a system font proves nothing about a
+// font path. typst finds system fonts on its own, so a document naming
+// one compiles cleanly whether or not the path under test was passed —
+// and the test passes with the feature removed. That is how #144
+// shipped past a test whose name claimed the coverage, and #149 found
+// the same hole in two more guards: both still passed with every font
+// path stripped out of the compile.
+//
+// Renaming the family closes it. A family nobody has installed can
+// only resolve through the path being tested, so these guards now fail
+// when that path goes — which is the whole point of a regression guard.
+//
+// The rename is a same-length byte substitution of the family string in
+// the font's name table, in both its ASCII and UTF-16BE spellings.
+// Same length means every table offset, length and checksum in the file
+// stays exactly as it was, so no font library has to tolerate a repair
+// we did not make.
+func uniqueFamilyFont(t *testing.T, dir string) (family, path string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	probe := t.TempDir()
+
+	for _, src := range systemFontCandidates(t) {
+		raw, err := os.ReadFile(src)
+		if err != nil {
+			continue
+		}
+		// What does this file call itself? Ask typst rather than parse.
+		if err := os.WriteFile(filepath.Join(probe, "candidate.ttf"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		names := familiesUnder(probe)
+		if len(names) != 1 {
+			continue // a collection of several families is harder to rename cleanly
+		}
+		original := names[0]
+		if len(original) < 8 {
+			continue // too short to hold a name that could not be anything else
+		}
+		renamed := strings.Repeat("Zzprobeface", 1+len(original)/11)[:len(original)]
+
+		patched := bytes.ReplaceAll(raw, []byte(original), []byte(renamed))
+		patched = bytes.ReplaceAll(patched,
+			utf16BE(original), utf16BE(renamed))
+		if bytes.Equal(patched, raw) {
+			continue // the name is stored in some form we did not find
+		}
+		out := filepath.Join(dir, "unique.ttf")
+		if err := os.WriteFile(out, patched, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// It only counts if typst agrees the family is now the new one.
+		if got := familiesUnder(dir); len(got) == 1 && got[0] == renamed {
+			return renamed, out
+		}
+		_ = os.Remove(out)
+	}
+	t.Skip("no system face could be given a family name unique to this test")
+	return "", ""
+}
+
+// utf16BE is how a TrueType name table stores a Windows-platform name.
+func utf16BE(s string) []byte {
+	out := make([]byte, 0, len(s)*2)
+	for _, r := range utf16.Encode([]rune(s)) {
+		out = append(out, byte(r>>8), byte(r))
+	}
+	return out
 }
 
 // familiesFromPathOnly lists the families a directory provides, with
