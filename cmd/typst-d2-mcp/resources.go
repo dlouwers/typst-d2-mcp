@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
 	"github.com/dlouwers/typst-d2-mcp/internal/identity"
@@ -146,7 +147,10 @@ func handleReadPage(factory workspace.Factory, store *authdb.Store) server.Resou
 		}
 		data, err := os.ReadFile(pageFile)
 		if err != nil {
-			return nil, fmt.Errorf("page %d of %s was not produced — does it have that many pages?", page, docRel)
+			// renderPages has already established the page exists, so
+			// anything here is a real read failure and says so rather
+			// than blaming the document's length.
+			return nil, fmt.Errorf("read page %d of %s: %w", page, docRel, err)
 		}
 		return []mcp.ResourceContents{mcp.BlobResourceContents{
 			URI: req.Params.URI, MIMEType: "image/png", Blob: base64.StdEncoding.EncodeToString(data),
@@ -168,14 +172,12 @@ func renderPages(ctx context.Context, store *authdb.Store, id identity.Identity,
 	if err != nil {
 		return "", err
 	}
-	want := filepath.Join(outDir, fmt.Sprintf("page-%d.png", page))
-
 	srcInfo, err := os.Stat(srcPath)
 	if err != nil {
 		return "", err
 	}
-	if info, statErr := os.Stat(want); statErr == nil && info.ModTime().After(srcInfo.ModTime()) {
-		return want, nil // cached and newer than the source
+	if pages := renderedPages(outDir); pagesAreFresh(pages, srcInfo.ModTime()) {
+		return pageFrom(pages, page, docRel)
 	}
 	// Clear before rendering. A document that has SHRUNK would otherwise
 	// keep a preview for a page it no longer has — charged to the
@@ -222,7 +224,14 @@ func renderPages(ctx context.Context, store *authdb.Store, id identity.Identity,
 	}
 	defer cleanupView()
 
-	args := typstArgs(r, staged.Name(), filepath.Join(outDir, "page-{n}.png"),
+	// "{p}", not "{n}". Both spell the page number, but {n} is
+	// undocumented and zero-pads it to the width of the page count, so
+	// a document of ten pages or more wrote page-01.png while every
+	// reader here looked for page-1.png. That was #145: a 20-page deck
+	// rendered perfectly and no page of it could be read, while the
+	// five-page documents everyone tested with worked. typst documents
+	// {p}, {0p} and {t}; {p} is the unpadded one.
+	args := typstArgs(r, staged.Name(), filepath.Join(outDir, "page-{p}.png"),
 		packageFontPath(view))
 	args = append([]string{args[0], "--format", "png", "--ppi", "96"}, args[1:]...)
 	cmd := exec.CommandContext(ctx, "typst", args...)
@@ -230,7 +239,73 @@ func renderPages(ctx context.Context, store *authdb.Store, id identity.Identity,
 	if out, runErr := cmd.CombinedOutput(); runErr != nil {
 		return "", fmt.Errorf("render pages of %s: %s", docRel, strings.TrimSpace(string(out)))
 	}
-	return want, nil
+	return pageFrom(renderedPages(outDir), page, docRel)
+}
+
+// renderedPages maps page number to file for the previews already in
+// outDir.
+//
+// Read back rather than reconstructed. The name typst writes depends on
+// the document's page count, and #145 was this server predicting that
+// name and being wrong — so the prediction is gone. A padded preview
+// left by an older build is still found, which is what makes the fix
+// safe on a workspace that already has one.
+func renderedPages(outDir string) map[int]string {
+	entries, err := os.ReadDir(outDir)
+	if err != nil {
+		return nil
+	}
+	pages := map[int]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		digits := strings.TrimSuffix(strings.TrimPrefix(name, "page-"), ".png")
+		if digits == name || digits == "" {
+			continue
+		}
+		n, convErr := strconv.Atoi(digits)
+		if convErr != nil || n < 1 {
+			continue
+		}
+		pages[n] = filepath.Join(outDir, name)
+	}
+	return pages
+}
+
+// pagesAreFresh reports whether every preview postdates the source. A
+// document is rendered in one typst run, so a single stale page means
+// the whole set belongs to an older draft.
+func pagesAreFresh(pages map[int]string, src time.Time) bool {
+	if len(pages) == 0 {
+		return false
+	}
+	for _, p := range pages {
+		info, err := os.Stat(p)
+		if err != nil || !info.ModTime().After(src) {
+			return false
+		}
+	}
+	return true
+}
+
+// pageFrom picks the requested page out of what was actually rendered,
+// and otherwise says what the document has.
+//
+// "was not produced — does it have that many pages?" was a guess, and
+// in #145 it was the wrong guess twice over: every page existed, and
+// the question it asked the caller to consider was not the problem. A
+// caller who cannot see the filesystem can do nothing with a guess.
+func pageFrom(pages map[int]string, page int, docRel string) (string, error) {
+	if p, ok := pages[page]; ok {
+		return p, nil
+	}
+	if len(pages) == 0 {
+		return "", fmt.Errorf("rendering %s produced no pages", docRel)
+	}
+	return "", fmt.Errorf("%s renders to %d page(s), so there is no page %d",
+		docRel, len(pages), page)
 }
 
 // handleReadIndex answers "what can I read here" for this caller.
