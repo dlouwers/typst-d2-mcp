@@ -213,8 +213,19 @@ func (g *GitHub) ServeCallback(w http.ResponseWriter, r *http.Request) {
 	// the friendly early gate rather than the authoritative one.
 	if !g.loginAllowed(r.Context(), gu.Login) {
 		slog.Warn("oauth login rejected: not allowlisted", "login", gu.Login, "github_id", gu.ID)
+		const denial = "this GitHub account is not authorised for this server"
+		// Explain it to the person before continuing the protocol, but
+		// only where "ask for an invite" is actually the answer. On an
+		// open deployment this branch means the invite lookup failed
+		// and we failed closed (see loginAllowed) — a server fault, not
+		// a decision about them, and telling them to request an invite
+		// would send them to the wrong place entirely.
+		if g.InviteOnly() {
+			g.serveRefusal(w, r, gu.Login, session.RedirectURI, session.ClientState, denial)
+			return
+		}
 		redirectOAuthError(w, r, session.RedirectURI, session.ClientState,
-			"access_denied", "this GitHub account is not authorised for this server")
+			"access_denied", denial)
 		return
 	}
 	userDBID, err := g.Store.UpsertGitHubUser(r.Context(), gu.ID, gu.Login, gu.Email)
