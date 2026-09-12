@@ -407,27 +407,17 @@ func TestPackageFontPath_EmptyViewIsEmpty(t *testing.T) {
 // when compiling against that template, and typst does not fall back.
 func TestCompile_TemplateFontResolves(t *testing.T) {
 	requireTypst(t)
-	src := findSystemFont(t) // skips when the host has no fonts
 
 	data := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", data)
 	pkg := filepath.Join(data, "typst", "packages", builtinNamespace, "templates", "9.9.9")
-	if err := os.MkdirAll(filepath.Join(pkg, "fonts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pkg, "fonts", filepath.Base(src)), raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
 
-	// Which family does that file provide, ignoring everything else?
-	families := familiesFromPathOnly(t, filepath.Join(pkg, "fonts"))
-	if len(families) == 0 {
-		t.Skip("could not determine the family of the stand-in font")
-	}
+	// A family name nobody has installed (#149). With an ordinary
+	// system font this test passed with the package view's font path
+	// removed from the compile entirely — typst found the face by
+	// itself, so the assertion never touched the mechanism it names.
+	family, _ := uniqueFamilyFont(t, filepath.Join(pkg, "fonts"))
+	families := []string{family}
 
 	toml := "[package]\nname = \"templates\"\nversion = \"9.9.9\"\nentrypoint = \"lib.typ\"\n"
 	if err := os.WriteFile(filepath.Join(pkg, "typst.toml"), []byte(toml), 0o644); err != nil {
