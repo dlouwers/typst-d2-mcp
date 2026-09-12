@@ -1567,18 +1567,43 @@ func handleCompileTypst(factory workspace.Factory, store *authdb.Store) server.T
 // "workspace" is the user's filesystem) gets no --root, leaving typst's
 // default of the input file's own directory.
 //
-// Fonts reach typst through the package view, never as the tenant's own
-// path. A tenant root is <root>/gh:<id>, and typst splits --font-path on
-// ":" — so naming that path directly silently discarded it, which is
-// what #107 was. extraFontPaths therefore carries view paths, and a
-// path that cannot survive the command line is dropped with a warning
-// rather than passed and quietly ignored.
+// A tenant's own fonts reach typst through the package view, never as
+// the tenant's own path. A tenant root is <root>/gh:<id>, and typst
+// splits --font-path on ":" — so naming that path directly silently
+// discarded it, which is what #107 was. extraFontPaths therefore
+// carries view paths; fontArgs decides the rest of the search path and
+// drops anything typst could not use.
 func typstArgs(r workspace.Resolver, in, out string, extraFontPaths ...string) []string {
 	args := []string{"compile"}
 	if b, ok := r.(workspace.Bounded); ok {
 		args = append(args, "--root", b.WorkspaceRoot())
 	}
-	for _, p := range extraFontPaths {
+	args = append(args, fontArgs(extraFontPaths...)...)
+	return append(args, in, out)
+}
+
+// fontArgs turns a font search path set into typst arguments, and is
+// the only place a compile's font path is decided.
+//
+// The bundled collection is appended here rather than at each call
+// site, because #144 was exactly a call site that never named it: the
+// collection from #120 was listed by search_fonts from a constant only
+// search_fonts knew, while every compile passed the package view and
+// nothing else. So a document asking for Inter got Libertinus Serif,
+// and the tool that exists to prevent silent substitution was causing
+// it. A call site cannot forget what it does not have to remember.
+//
+// Bundled goes last so a tenant's own face, or one a template ships,
+// shadows a shipped family of the same name — the precedence
+// search_fonts already reports in its attribution.
+//
+// An absent directory is not an error: typst ignores a --font-path
+// that is not there, which is the stdio case on a machine that never
+// had the image's collection. A path that cannot survive the command
+// line is dropped LOUDLY, because silence was the actual harm in #107.
+func fontArgs(paths ...string) []string {
+	var args []string
+	add := func(p string) {
 		switch {
 		case p == "":
 		case !safeFontPath(p):
@@ -1588,7 +1613,11 @@ func typstArgs(r workspace.Resolver, in, out string, extraFontPaths ...string) [
 			args = append(args, "--font-path", p)
 		}
 	}
-	return append(args, in, out)
+	for _, p := range paths {
+		add(p)
+	}
+	add(bundledFontsPath)
+	return args
 }
 
 func handlePDFDownload(factory workspace.Factory, store *authdb.Store) http.Handler {
