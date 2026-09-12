@@ -279,7 +279,46 @@ var migrations = []migration{
 			`DROP TABLE IF EXISTS owners`,
 		},
 	},
+	{
+		revision: 9,
+		name:     "record when a client last completed an exchange",
+		stmts: []string{
+			// oauth_clients only ever grew. /register is unauthenticated
+			// by design, so every attempt at a doomed flow left a
+			// permanent row — one user who could never authenticate at
+			// all produced roughly eight of them in a day (#142, #143).
+			//
+			// Nothing recorded whether a registration was ever USED,
+			// which is the one fact that separates "abandoned" from "in
+			// service". NULL means no exchange has ever completed.
+			`ALTER TABLE oauth_clients ADD COLUMN last_used_at TIMESTAMP`,
+
+			// Backfill from evidence rather than assumption. A code is
+			// marked used = 1 when it is redeemed and rows are never
+			// deleted from that table, so it is a complete history of
+			// every completed exchange this server has ever performed —
+			// which makes a NULL here mean "never used", not merely
+			// "never observed since this column existed".
+			//
+			// expires_at stands in for the redemption time: codes are
+			// minted with a short life, so it is within minutes of the
+			// exchange and always LATER than it. Erring late is the safe
+			// direction — it can only make a client look more recently
+			// used, and so protect it from the prune.
+			`UPDATE oauth_clients SET last_used_at = (
+   SELECT MAX(c.expires_at) FROM oauth_authorization_codes c
+    WHERE c.client_id = oauth_clients.client_id AND c.used = 1
+ ) WHERE last_used_at IS NULL`,
+
+			// The prune and the backfill both look codes up by client.
+			`CREATE INDEX IF NOT EXISTS idx_oauth_codes_client ON oauth_authorization_codes(client_id)`,
+		},
+	},
 }
+
+// shippedMigrations is the revision list as compiled in, kept so a test
+// that swaps `migrations` for a subset can still reach the real ones.
+var shippedMigrations = migrations
 
 // latestRevision is the highest revision this binary knows how to apply.
 func latestRevision() int {

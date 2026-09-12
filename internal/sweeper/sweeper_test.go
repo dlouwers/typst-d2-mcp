@@ -343,3 +343,42 @@ func TestSweepOnce_KeepsWorkspaceFonts(t *testing.T) {
 		t.Errorf("FilesDeleted = %d, want 2", res.FilesDeleted)
 	}
 }
+
+// The prune is off unless an operator turns it on. Deleting third-party
+// registration state is not something a deployment should start doing
+// because it upgraded.
+func TestSweepOnce_ClientPruneOffByDefault(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.RegisterClient(t.Context(), "abandoned",
+		[]string{"https://localhost/cb"}, "none"); err != nil {
+		t.Fatalf("RegisterClient: %v", err)
+	}
+
+	sw := New(s, Config{}) // no ClientTTL
+	res, err := sw.SweepOnce(t.Context(), time.Now().UTC().Add(365*24*time.Hour))
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if res.ClientsDeleted != 0 {
+		t.Errorf("clients deleted = %d with the prune disabled, want 0", res.ClientsDeleted)
+	}
+}
+
+// With a TTL set, a pass removes the registrations that never became
+// anything and reports how many.
+func TestSweepOnce_PrunesUnusedClients(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.RegisterClient(t.Context(), "abandoned",
+		[]string{"https://localhost/cb"}, "none"); err != nil {
+		t.Fatalf("RegisterClient: %v", err)
+	}
+
+	sw := New(s, Config{ClientTTL: time.Hour})
+	res, err := sw.SweepOnce(t.Context(), time.Now().UTC().Add(48*time.Hour))
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if res.ClientsDeleted != 1 {
+		t.Errorf("clients deleted = %d, want 1", res.ClientsDeleted)
+	}
+}

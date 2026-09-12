@@ -285,6 +285,17 @@ SELECT code, user_id, client_id, redirect_uri, code_challenge, code_challenge_me
 	if n != 1 {
 		return AuthorizationCode{}, 0, ErrAuthorizationCode
 	}
+	// Redeeming a code is the moment a registration stops being a
+	// guess and becomes a client in service. It is recorded in the same
+	// transaction as the redemption so the two cannot disagree: a
+	// client that got a token is never a client the prune may remove
+	// (#143).
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE oauth_clients SET last_used_at = ? WHERE client_id = ?`,
+		time.Now().UTC(), out.ClientID,
+	); err != nil {
+		return AuthorizationCode{}, 0, fmt.Errorf("record client use: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return AuthorizationCode{}, 0, fmt.Errorf("commit: %w", err)
 	}

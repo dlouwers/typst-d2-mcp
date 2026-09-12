@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // withMigrations swaps the package migration list for the duration of a
@@ -328,3 +329,101 @@ func TestMigrations_RefusesNewerDatabase(t *testing.T) {
 		}
 	}
 }
+
+// Revision 9 adds last_used_at, and NULL in that column is what licenses
+// the sweeper to delete a registration. So the backfill is the whole
+// safety property: a client that completed exchanges before the column
+// existed must not read as "never used" the moment a deployment
+// upgrades, or the first sweep after a release deletes every working
+// integration on the server.
+//
+// Built by migrating to revision 8, writing the rows an established
+// deployment would have, and then letting revision 9 run over them.
+func TestMigrations_BackfillsClientUseFromRedeemedCodes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.sqlite")
+
+	upTo8 := []migration{}
+	for _, m := range migrations {
+		if m.revision <= 8 {
+			upTo8 = append(upTo8, m)
+		}
+	}
+	withMigrations(t, upTo8)
+	s8, err := Open(path)
+	if err != nil {
+		t.Fatalf("open at revision 8: %v", err)
+	}
+
+	if _, err := s8.db.Exec(
+		`INSERT INTO users(id, github_id, github_login) VALUES(1, 99, 'someone')`); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+
+	// Three clients as an established deployment would have them: one
+	// that redeemed a code, one whose code was minted and abandoned,
+	// and one that never got that far.
+	for _, c := range []struct {
+		id   string
+		used int
+		mint bool
+	}{
+		{"cli-redeemed", 1, true},
+		{"cli-abandoned-code", 0, true},
+		{"cli-never", 0, false},
+	} {
+		if _, err := s8.db.Exec(
+			`INSERT INTO oauth_clients(client_id, client_name, redirect_uris)
+			 VALUES(?, ?, ?)`, c.id, c.id, "https://localhost/cb"); err != nil {
+			t.Fatalf("insert client %s: %v", c.id, err)
+		}
+		if !c.mint {
+			continue
+		}
+		if _, err := s8.db.Exec(
+			`INSERT INTO oauth_authorization_codes
+			   (code, user_id, client_id, redirect_uri, code_challenge, used, expires_at)
+			 VALUES(?, 1, ?, ?, 'challenge', ?, ?)`,
+			"code-"+c.id, c.id, "https://localhost/cb", c.used,
+			time.Now().UTC().Add(10*time.Minute)); err != nil {
+			t.Fatalf("insert code for %s: %v", c.id, err)
+		}
+	}
+	if err := s8.Close(); err != nil {
+		t.Fatalf("close at revision 8: %v", err)
+	}
+
+	// Now the real list, which carries revision 9 and its backfill.
+	migrations = append([]migration{}, upTo8...)
+	for _, m := range allMigrationsForTest() {
+		if m.revision == 9 {
+			migrations = append(migrations, m)
+		}
+	}
+	s9, err := Open(path)
+	if err != nil {
+		t.Fatalf("open at revision 9: %v", err)
+	}
+	defer func() { _ = s9.Close() }()
+
+	stale, err := s9.UnusedClientsBefore(t.Context(), time.Now().UTC().Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("UnusedClientsBefore: %v", err)
+	}
+	got := map[string]bool{}
+	for _, c := range stale {
+		got[c.ClientID] = true
+	}
+	if got["cli-redeemed"] {
+		t.Error("a client that redeemed a code before the upgrade is now prunable")
+	}
+	if !got["cli-abandoned-code"] {
+		t.Error("a client whose code was never redeemed should be prunable")
+	}
+	if !got["cli-never"] {
+		t.Error("a client that never reached an exchange should be prunable")
+	}
+}
+
+// allMigrationsForTest returns the shipped revision list even while a
+// test has swapped `migrations` for a subset.
+func allMigrationsForTest() []migration { return shippedMigrations }
