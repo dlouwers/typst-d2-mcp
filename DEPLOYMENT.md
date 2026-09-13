@@ -59,6 +59,7 @@ The OAuth scope requested is `read:user user:email` — read-only.
 | `TYPST_D2_MCP_COMPILE_TIMEOUT` | `30s` | Per-compile budget (parses Go duration strings). `0` defers to caller. |
 | `TYPST_D2_MCP_WORKSPACE_TTL` | `168h` (7d) | Age after which workspace files are purged. `0` disables the purge; sizes are still measured. |
 | `TYPST_D2_MCP_SWEEP_INTERVAL` | `1h` | Gap between garbage-collection passes. |
+| `TYPST_D2_MCP_OAUTH_CLIENT_TTL` | `168h` (7d) | Age after which an OAuth registration that never completed a token exchange is deleted. `0` disables the prune. A client that HAS completed one is never deleted. |
 | `TYPST_D2_MCP_MAX_INPUT_BYTES` | `1048576` (1 MiB) | Cap on `put_file` and compile input sizes. |
 | `TYPST_D2_MCP_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error`. |
 | `TYPST_D2_MCP_LOG_FORMAT` | `json` in http, `text` in stdio | `json` or `text`. |
@@ -111,10 +112,31 @@ A background sweeper runs every `TYPST_D2_MCP_SWEEP_INTERVAL` and:
   download link still points at, and removes directories the purge
   leaves empty;
 - records each user's total workspace size, which the admin UI reads
-  instead of walking the filesystem on page load.
+  instead of walking the filesystem on page load;
+- deletes OAuth client registrations that never completed a token
+  exchange and are older than `TYPST_D2_MCP_OAUTH_CLIENT_TTL`.
 
 Setting `TYPST_D2_MCP_WORKSPACE_TTL=0` disables only the file purge —
 link sweeping and size measurement still run.
+
+**About the client prune.** `/register` is unauthenticated by design, so
+every attempt at an authorisation that was never going to succeed leaves
+a permanent row: a single user who could not authenticate at all
+produced roughly eight of them in one day. The prune removes only
+registrations that never completed an exchange — a client that has ever
+received a token is kept at any age, because "quiet for a month" and
+"was never anything" are different states and only the second is safe to
+collect.
+
+Each removal is logged at INFO with the client id, name and registration
+time before it happens, so a client that unexpectedly has to register
+again is diagnosable rather than a mystery. Sessions and authorization
+codes belonging to a removed client go with it.
+
+An upgrade does not make existing clients eligible: the migration that
+adds the column backfills it from redeemed authorization codes, which
+are never deleted and so form a complete record of every exchange the
+server has performed.
 
 Both paths are derived from env vars at startup; override them if you
 prefer a different layout.

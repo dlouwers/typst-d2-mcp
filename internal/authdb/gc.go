@@ -117,3 +117,68 @@ func (s *Store) WorkspaceUsageByUser(ctx context.Context) (map[string]WorkspaceU
 	}
 	return out, nil
 }
+
+// StaleClient is a registration the prune considers abandoned: it has
+// never completed a token exchange and is older than the cutoff.
+type StaleClient struct {
+	ClientID   string
+	ClientName string
+	CreatedAt  time.Time
+}
+
+// UnusedClientsBefore lists registrations that have never completed an
+// exchange and were created before cutoff.
+//
+// Separate from the delete so the same question can be asked without
+// answering it — an operator, or a dry run, can see exactly what would
+// go. `/register` is unauthenticated, so this table is the one place
+// where a stranger's retries become permanent server state, and a
+// delete pass over it should be inspectable before it is trusted.
+func (s *Store) UnusedClientsBefore(ctx context.Context, cutoff time.Time) ([]StaleClient, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT client_id, client_name, created_at
+  FROM oauth_clients
+ WHERE last_used_at IS NULL AND created_at < ?
+ ORDER BY created_at`, cutoff.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("query unused clients: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []StaleClient
+	for rows.Next() {
+		var c StaleClient
+		if err := rows.Scan(&c.ClientID, &c.ClientName, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan unused client: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUnusedClients removes registrations that never completed an
+// exchange and are older than cutoff, returning how many went.
+//
+// A client that HAS completed one is never removed, whatever its age:
+// the whole point of the distinction is that a working integration must
+// not be swept out from under someone who simply has not connected this
+// month.
+//
+// The sessions and codes belonging to a removed client go with it,
+// through ON DELETE CASCADE and the foreign_keys pragma set in Open.
+// That is asserted by a test rather than assumed, because SQLite
+// enforces those constraints only when the pragma is on, and a pragma
+// is easy to lose in a connection-string edit.
+func (s *Store) DeleteUnusedClients(ctx context.Context, cutoff time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+DELETE FROM oauth_clients
+ WHERE last_used_at IS NULL AND created_at < ?`, cutoff.UTC())
+	if err != nil {
+		return 0, fmt.Errorf("delete unused clients: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, nil // driver did not report; the delete still happened
+	}
+	return n, nil
+}

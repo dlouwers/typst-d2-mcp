@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dlouwers/typst-d2-mcp/internal/authdb"
 )
 
 // Store is the subset of authdb.Store the sweeper needs.
@@ -35,6 +37,8 @@ type Store interface {
 	DeleteExpiredPDFLinks(ctx context.Context, now time.Time) (int64, error)
 	LivePersistedPaths(ctx context.Context, now time.Time) (map[string]map[string]bool, error)
 	RecordWorkspaceUsage(ctx context.Context, userID string, bytes int64, at time.Time) error
+	UnusedClientsBefore(ctx context.Context, cutoff time.Time) ([]authdb.StaleClient, error)
+	DeleteUnusedClients(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
 // Config controls one sweeper instance.
@@ -52,14 +56,25 @@ type Config struct {
 
 	// Interval is the gap between passes.
 	Interval time.Duration
+
+	// ClientTTL is how long a registration that has never completed a
+	// token exchange survives. Zero disables the prune.
+	//
+	// A separate knob from FileTTL because it answers a different
+	// question. Workspace files are scratch, aged out on the assumption
+	// that anything there can be remade. A client registration is not
+	// scratch: it is deleted because it was never anything in the first
+	// place, and one that HAS been used is never deleted at all.
+	ClientTTL time.Duration
 }
 
 // Result reports what one pass did.
 type Result struct {
-	LinksDeleted  int64
-	FilesDeleted  int
-	BytesDeleted  int64
-	UsersMeasured int
+	LinksDeleted   int64
+	FilesDeleted   int
+	BytesDeleted   int64
+	UsersMeasured  int
+	ClientsDeleted int64
 }
 
 // Sweeper runs periodic garbage collection.
@@ -82,6 +97,8 @@ func (s *Sweeper) Run(ctx context.Context) {
 		"interval", s.cfg.Interval.String(),
 		"file_ttl", s.cfg.FileTTL.String(),
 		"purge_enabled", s.cfg.FileTTL > 0,
+		"client_ttl", s.cfg.ClientTTL.String(),
+		"client_prune_enabled", s.cfg.ClientTTL > 0,
 		"root", s.cfg.Root,
 	)
 	ticker := time.NewTicker(s.cfg.Interval)
@@ -91,12 +108,13 @@ func (s *Sweeper) Run(ctx context.Context) {
 		res, err := s.SweepOnce(ctx, time.Now().UTC())
 		if err != nil {
 			slog.Error("sweep failed", "err", err)
-		} else if res.LinksDeleted > 0 || res.FilesDeleted > 0 {
+		} else if res.LinksDeleted > 0 || res.FilesDeleted > 0 || res.ClientsDeleted > 0 {
 			slog.Info("sweep complete",
 				"links_deleted", res.LinksDeleted,
 				"files_deleted", res.FilesDeleted,
 				"bytes_deleted", res.BytesDeleted,
 				"users_measured", res.UsersMeasured,
+				"clients_deleted", res.ClientsDeleted,
 			)
 		}
 		select {
@@ -118,6 +136,12 @@ func (s *Sweeper) SweepOnce(ctx context.Context, now time.Time) (Result, error) 
 		return res, fmt.Errorf("sweep links: %w", err)
 	}
 	res.LinksDeleted = deleted
+
+	clients, err := s.sweepClients(ctx, now)
+	if err != nil {
+		return res, err
+	}
+	res.ClientsDeleted = clients
 
 	if s.cfg.Root == "" {
 		return res, nil
@@ -241,6 +265,36 @@ var configDirs = []string{"fonts"}
 
 // isConfig reports whether a workspace-relative path lives under one of
 // the configuration directories.
+// sweepClients removes registrations that never became anything.
+//
+// Named before they are deleted, at INFO, because this is the one
+// sweeper action whose subject is a third party's state rather than a
+// tenant's own scratch: if a prune ever removes something it should
+// not have, the log is what makes that diagnosable rather than a
+// mystery about a client that "suddenly had to register again".
+func (s *Sweeper) sweepClients(ctx context.Context, now time.Time) (int64, error) {
+	if s.cfg.ClientTTL <= 0 {
+		return 0, nil
+	}
+	cutoff := now.Add(-s.cfg.ClientTTL)
+	stale, err := s.store.UnusedClientsBefore(ctx, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("list unused clients: %w", err)
+	}
+	if len(stale) == 0 {
+		return 0, nil
+	}
+	for _, c := range stale {
+		slog.Info("pruning oauth client that never completed an exchange",
+			"client_id", c.ClientID, "client_name", c.ClientName, "registered", c.CreatedAt)
+	}
+	n, err := s.store.DeleteUnusedClients(ctx, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete unused clients: %w", err)
+	}
+	return n, nil
+}
+
 func isConfig(rel string) bool {
 	for _, dir := range configDirs {
 		if rel == dir || strings.HasPrefix(rel, dir+string(filepath.Separator)) {

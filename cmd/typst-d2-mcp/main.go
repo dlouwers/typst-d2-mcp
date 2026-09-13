@@ -75,6 +75,7 @@ const (
 
 	envWorkspaceTTL  = "TYPST_D2_MCP_WORKSPACE_TTL"
 	envSweepInterval = "TYPST_D2_MCP_SWEEP_INTERVAL"
+	envClientTTL     = "TYPST_D2_MCP_OAUTH_CLIENT_TTL"
 
 	defaultMetricsAddr = ":9090"
 	defaultPDFLinkTTL  = time.Hour
@@ -83,6 +84,7 @@ const (
 	// flight is ever at risk, while still bounding the data volume.
 	// Workspaces are scratch space: their contents are reproducible.
 	defaultWorkspaceTTL  = 168 * time.Hour
+	defaultClientTTL     = 168 * time.Hour
 	defaultSweepInterval = time.Hour
 
 	defaultAddr           = ":8080"
@@ -161,6 +163,18 @@ func pdfLinkTTL() time.Duration {
 // the admin UI's storage column keeps working with purging off.
 func workspaceTTL() time.Duration {
 	return durationEnv(envWorkspaceTTL, defaultWorkspaceTTL)
+}
+
+// clientTTL is how long an OAuth registration that never completed a
+// token exchange survives. Zero disables the prune.
+//
+// A week, matching the workspace default, and for a similar reason: a
+// doomed authorisation leaves its row within minutes, so anything still
+// unused after days was never going to be used. A client that HAS
+// completed an exchange is never pruned at any age, so the risk this
+// bounds is "registered and abandoned", not "quiet for a while".
+func clientTTL() time.Duration {
+	return durationEnv(envClientTTL, defaultClientTTL)
 }
 
 // sweepInterval is the gap between garbage-collection passes.
@@ -938,9 +952,10 @@ func startSweeper(store *authdb.Store, factory workspace.Factory) {
 		root = tf.Root
 	}
 	sw := sweeper.New(store, sweeper.Config{
-		Root:     root,
-		FileTTL:  workspaceTTL(),
-		Interval: sweepInterval(),
+		Root:      root,
+		FileTTL:   workspaceTTL(),
+		Interval:  sweepInterval(),
+		ClientTTL: clientTTL(),
 	})
 	go sw.Run(context.Background())
 }
