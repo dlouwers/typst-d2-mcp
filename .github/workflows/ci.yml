@@ -17,18 +17,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # id-token: the design system comes from Artifact Registry through
+    # Workload Identity Federation (dlouwers/experiments#526).
+    permissions:
+      contents: read
+      id-token: write
     env:
-      # The design-system steps need the GitHub App private key, which lives
-      # only in the regular Actions secret store. Dependabot runs (and fork
-      # PRs) get an *empty* `secrets` context — yet `vars` still resolve there,
-      # so guarding on `vars.DS_APP_CLIENT_ID != ''` alone lets the token-mint
-      # step run and then fail hard with "private-key must be non-empty",
-      # taking the whole job red. Gate on the key itself: absent key ⇒ the DS
-      # steps stay inert. Referencing an absent secret yields "" (no error), so
-      # this is safe to evaluate in every context. `secrets` is not usable in an
-      # `if:`, but reading it into a job-level env var and testing that is the
-      # documented workaround.
-      HAS_DS_KEY: ${{ secrets.DS_APP_PRIVATE_KEY != '' }}
+      # The design-system step needs a GitHub OIDC token, and GitHub issues
+      # none to a pull request from a fork. Such a run cannot resolve the
+      # private module either way; skip the step rather than fail on it.
+      CAN_FETCH_DS: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,16 +64,12 @@ jobs:
       # playwright's webServer shells out to, both resolve the private
       # design-system module. See .github/actions/design-system-auth.
       #
-      # Inert without the key, which since #80 means the job cannot build
-      # rather than merely skipping a check — a fork PR has no access to the
-      # private module. Dependabot runs see only Dependabot secrets, so
-      # DS_APP_PRIVATE_KEY must exist in that store too.
+      # Skipped on a fork PR, which gets no OIDC token; since #80 such a run
+      # cannot build, rather than merely skipping a check. Dependabot runs
+      # get one like any other run of this repository.
       - name: Authenticate to the design system
-        if: env.HAS_DS_KEY == 'true'
+        if: env.CAN_FETCH_DS == 'true'
         uses: ./.github/actions/design-system-auth
-        with:
-          client-id: ${{ vars.DS_APP_CLIENT_ID }}
-          private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
 
       - name: Download dependencies
         timeout-minutes: 5
@@ -114,8 +108,11 @@ jobs:
   playwright:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     env:
-      HAS_DS_KEY: ${{ secrets.DS_APP_PRIVATE_KEY != '' }}
+      CAN_FETCH_DS: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -130,16 +127,12 @@ jobs:
       # playwright's webServer shells out to, both resolve the private
       # design-system module. See .github/actions/design-system-auth.
       #
-      # Inert without the key, which since #80 means the job cannot build
-      # rather than merely skipping a check — a fork PR has no access to the
-      # private module. Dependabot runs see only Dependabot secrets, so
-      # DS_APP_PRIVATE_KEY must exist in that store too.
+      # Skipped on a fork PR, which gets no OIDC token; since #80 such a run
+      # cannot build, rather than merely skipping a check. Dependabot runs
+      # get one like any other run of this repository.
       - name: Authenticate to the design system
-        if: env.HAS_DS_KEY == 'true'
+        if: env.CAN_FETCH_DS == 'true'
         uses: ./.github/actions/design-system-auth
-        with:
-          client-id: ${{ vars.DS_APP_CLIENT_ID }}
-          private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
