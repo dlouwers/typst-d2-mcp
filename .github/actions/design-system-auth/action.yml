@@ -73,3 +73,23 @@ runs:
           echo "GOPRIVATE="
         } >> "$GITHUB_ENV"
         echo "path=${netrc}" >> "$GITHUB_OUTPUT"
+
+    # setup-go restores the module cache, so `go mod download` usually never
+    # reaches GAR and would only find out it cannot on a cache miss. Ask GAR
+    # for the version go.mod requires, with the .netrc above, so every run
+    # proves the path works and fails here, with a clear message, if not.
+    - name: Check the module is reachable
+      shell: bash
+      env:
+        NETRC_FILE: ${{ steps.netrc.outputs.path }}
+      run: |
+        set -euo pipefail
+        mod=github.com/dlouwers/stormlantern-design-system
+        ver=$(awk -v m="$mod" '$1 == m { print $2; exit } $1 == "require" && $2 == m { print $3; exit }' go.mod)
+        [ -n "$ver" ] || { echo "::error::go.mod does not require ${mod}"; exit 1; }
+        url="https://europe-west4-go.pkg.dev/homelab-495021/go-stormlantern/${mod}/@v/${ver}.info"
+        if ! info=$(curl -sfS --netrc-file "$NETRC_FILE" "$url"); then
+          echo "::error::${mod}@${ver} is not readable from Artifact Registry. Is it uploaded (stormlantern-design-system go-module.yml), and does this repository have a reader binding (scripts/gcp-go-modules.nu)?"
+          exit 1
+        fi
+        echo "${mod}@${ver} reachable in Artifact Registry: ${info}"
