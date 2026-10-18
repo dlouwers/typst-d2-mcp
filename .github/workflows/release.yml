@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
-      id-token: write  # OIDC → WIF, to sign the tap App's JWT in KMS
+      id-token: write  # OIDC → WIF: the tap App's JWT in KMS, and the design system in GAR
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -35,18 +35,12 @@ jobs:
       # step; this workflow did not, so the first release after #82 would
       # have failed here while image.yml still pushed the tag to prod (#159).
       #
-      # No HAS_DS_KEY guard as in ci.yml: a tag push always sees the Actions
-      # secrets, and a release without the module cannot build anyway.
-      #
-      # The action rewrites https://github.com/ for git with the read-only
-      # design-system token. GoReleaser does not go through git for the
-      # release or the tap — both use the API with their own tokens — so
-      # that rewrite does not reach them.
+      # No fork guard as in ci.yml: a tag push is never from a fork, and a
+      # release without the module cannot build anyway. The action points
+      # GOPROXY at Artifact Registry, through WIF; it touches nothing git
+      # does, so GoReleaser's release and tap steps are unaffected.
       - name: Authenticate to the design system
         uses: ./.github/actions/design-system-auth
-        with:
-          client-id: ${{ vars.DS_APP_CLIENT_ID }}
-          private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
 
       # Writing the Homebrew formulae is machine access to another repo, so
       # it goes through a GitHub App rather than a personal token: minted
@@ -107,9 +101,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # the design system in GAR, see image.yml
     uses: ./.github/workflows/image.yml
-    # DS_APP_PRIVATE_KEY, for the private design-system module.
-    secrets: inherit
 
   # Installs what was just published from the tap, on macOS and Linux. Not a
   # gate for `image` on purpose: see brew-smoke.yml.

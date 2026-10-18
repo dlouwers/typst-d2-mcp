@@ -83,10 +83,11 @@
     "KUBECONFIG": "/home/vscode/.kube/config",
     // Let `go install` fetch a newer toolchain when a tool needs one.
     "GOTOOLCHAIN": "auto",
-    // Configuration, not a credential. Keeps the private design-system
-    // module off the public proxy and checksum database; without it
-    // resolution fails before the gh credential is ever consulted. Mirrors
-    // .github/actions/design-system-auth, so local and CI resolve alike.
+    // Configuration, not a credential. Fetches the private design-system
+    // module straight from github.com with the gh credential, off the public
+    // proxy and checksum database. CI instead reads it from Artifact Registry
+    // through WIF (.github/actions/design-system-auth); both serve the same
+    // tagged tree, so go.sum agrees either way.
     "GOPRIVATE": "github.com/dlouwers/*",
     // Stops gh writing state.yml to its config dir, which is what lets the
     // gh mount above stay readonly.

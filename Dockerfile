@@ -14,23 +14,19 @@ WORKDIR /src
 # Download deps separately so the layer is reused across source-only edits.
 COPY go.mod go.sum ./
 
-# github.com/dlouwers/stormlantern-design-system is a private module (#80), so
-# this needs a credential. It arrives as a BuildKit secret, which is mounted
-# for the life of the RUN and never written to a layer.
-#
-# The credential is passed through GIT_CONFIG_COUNT/KEY/VALUE rather than
-# `git config --global`, deliberately: the latter writes the token into
-# /root/.gitconfig, and that file IS part of the layer. Env vars set on a
-# single RUN are not.
+# github.com/dlouwers/stormlantern-design-system is a private module (#80),
+# served from Google Artifact Registry (dlouwers/experiments#526). The .netrc
+# for that host arrives as a BuildKit secret, mounted at /root/.netrc for the
+# life of this RUN and never written to a layer.
 #
 # A build without the secret fails here rather than later, which is the right
-# place: without it the module cannot be resolved at all. Locally:
-#   podman build --secret id=gh_token,env=GH_TOKEN .
-RUN --mount=type=secret,id=gh_token \
-    GOPRIVATE=github.com/dlouwers/* \
-    GIT_CONFIG_COUNT=1 \
-    GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/gh_token)@github.com/.insteadOf" \
-    GIT_CONFIG_VALUE_0="https://github.com/" \
+# place: without it the module cannot be resolved at all. Locally (nu):
+#   $"machine europe-west4-go.pkg.dev login oauth2accesstoken password (gcloud auth print-access-token)\n" | save -f /tmp/go.netrc
+#   podman build --secret id=go_netrc,src=/tmp/go.netrc .
+RUN --mount=type=secret,id=go_netrc,target=/root/.netrc,required=true \
+    GOPROXY=https://europe-west4-go.pkg.dev/homelab-495021/go-stormlantern,https://proxy.golang.org,direct \
+    GONOSUMDB=github.com/dlouwers/stormlantern-design-system \
+    GOPRIVATE= \
     go mod download
 
 COPY . .
