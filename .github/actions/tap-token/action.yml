@@ -1,0 +1,107 @@
+name: Mint a Homebrew tap token
+description: >
+  Mint a one-hour installation token for dlouwers/homebrew-tap, signing the
+  GitHub App JWT with a key that lives in Cloud KMS. No secret is involved.
+
+# ---------------------------------------------------------------------------
+# Why this replaces actions/create-github-app-token
+# ---------------------------------------------------------------------------
+#
+# The tap App (id 4637258, the tap ruleset's only bypass actor) has
+# Contents: write on dlouwers/homebrew-tap, and a formula is Ruby that `brew`
+# runs: whoever holds its private key can put code on every machine that
+# installs from the tap. As a repository secret that key never expired and
+# sat one leaked workflow away from anyone.
+#
+# GitHub does not accept federated identities, so an installation token
+# still needs a JWT signed with the App's key. The key is therefore imported
+# into Cloud KMS (non-exportable), and this action proves who it is through
+# GitHub OIDC → Workload Identity Federation to get permission to SIGN with
+# it. KMS never hands the key out; GitHub never sees a stored credential.
+#
+# The WIF provider admits only this repository (by numeric id), and only
+# release.yml on a v* tag push or verify-tap-write.yml dispatched on main
+# (by job_workflow_ref). The signer role is granted on the one key. Both are
+# set by scripts/gcp-tap-kms.nu in dlouwers/experiments (#505), which also
+# records how to rotate.
+#
+# The calling job needs `permissions: id-token: write`.
+#
+# Unlike create-github-app-token there is no post step to revoke the token
+# (composite actions cannot have one). Callers revoke it explicitly at the
+# end of the job; otherwise it expires after an hour.
+
+inputs:
+  client-id:
+    description: GitHub App client id (repository variable TAP_APP_CLIENT_ID).
+    required: true
+  workload-identity-provider:
+    description: Full WIF provider name (repository variable TAP_WIF_PROVIDER).
+    required: true
+  kms-key-version:
+    description: Full KMS key version name (repository variable TAP_KMS_KEY_VERSION).
+    required: true
+  repository:
+    description: Repository under dlouwers the token is scoped to.
+    default: homebrew-tap
+
+outputs:
+  token:
+    description: Installation token, Contents write on the one repository.
+    value: ${{ steps.mint.outputs.token }}
+
+runs:
+  using: composite
+  steps:
+    # Direct WIF: the federated token itself is authorised on the KMS key, so
+    # there is no service account to impersonate. No credentials file either —
+    # GoReleaser refuses to release from a dirty tree, and nothing here needs
+    # gcloud.
+    - name: Authenticate to Google Cloud
+      id: gcp
+      uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      with:
+        workload_identity_provider: ${{ inputs.workload-identity-provider }}
+        create_credentials_file: false
+
+    - name: Sign the App JWT in KMS and exchange it
+      id: mint
+      shell: bash
+      env:
+        CLIENT_ID: ${{ inputs.client-id }}
+        KEY_VERSION: ${{ inputs.kms-key-version }}
+        REPOSITORY: ${{ inputs.repository }}
+        GCP_TOKEN: ${{ steps.gcp.outputs.auth_token }}
+      run: |
+        set -euo pipefail
+        b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+        # GitHub caps exp at ten minutes; iat is backdated against clock skew.
+        now=$(date +%s)
+        header=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
+        payload=$(jq -cn --arg iss "$CLIENT_ID" --argjson iat $((now - 60)) --argjson exp $((now + 540)) \
+          '{iat: $iat, exp: $exp, iss: $iss}' | tr -d '\n' | b64url)
+
+        # KMS signs a digest, not a message: RSA_SIGN_PKCS1_2048_SHA256 over
+        # the SHA-256 of "header.payload" is exactly RS256.
+        digest=$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -binary | openssl base64 -A)
+        sig=$(curl -fsS --retry 3 \
+            -H "Authorization: Bearer ${GCP_TOKEN}" -H 'Content-Type: application/json' \
+            -d "$(jq -cn --arg d "$digest" '{digest: {sha256: $d}}')" \
+            "https://cloudkms.googleapis.com/v1/${KEY_VERSION}:asymmetricSign" \
+          | jq -er .signature | openssl base64 -d -A | b64url)
+        jwt="${header}.${payload}.${sig}"
+        echo "::add-mask::${jwt}"
+
+        gh_api() {
+          curl -fsS --retry 3 -H "Authorization: Bearer $1" \
+            -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "${@:2}"
+        }
+        installation=$(gh_api "$jwt" "https://api.github.com/repos/dlouwers/${REPOSITORY}/installation" | jq -er .id)
+        token=$(gh_api "$jwt" -X POST \
+            -d "$(jq -cn --arg r "$REPOSITORY" '{repositories: [$r], permissions: {contents: "write"}}')" \
+            "https://api.github.com/app/installations/${installation}/access_tokens" \
+          | jq -er .token)
+        echo "::add-mask::${token}"
+        echo "token=${token}" >> "$GITHUB_OUTPUT"
+        echo "minted a token for dlouwers/${REPOSITORY} (installation ${installation}), signed by ${KEY_VERSION##*/cryptoKeys/}"

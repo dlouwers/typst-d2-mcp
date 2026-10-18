@@ -12,6 +12,9 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write  # OIDC → WIF, to sign the tap App's JWT in KMS
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,21 +33,24 @@ jobs:
       # Writing the Homebrew formulae is machine access to another repo, so
       # it goes through a GitHub App rather than a personal token: minted
       # per run, expiring in about an hour, owned by the account rather
-      # than by a person whose access it would otherwise inherit, and with
-      # no annual expiry to renew by hand. The app is installed on
-      # dlouwers/homebrew-tap alone, with Contents: write and nothing else.
+      # than by a person whose access it would otherwise inherit. The app is
+      # installed on dlouwers/homebrew-tap alone, with Contents: write and
+      # nothing else.
       #
       # Separate from the read app on purpose — App permissions apply to
       # every repo in an installation, so a shared app would silently give
       # the design-system repo write access.
+      #
+      # Its private key lives in Cloud KMS, not in a secret: this job signs
+      # the App JWT there through GitHub OIDC (dlouwers/experiments#505). The
+      # WIF provider admits this workflow only on a v* tag push.
       - name: Mint a token for the Homebrew tap
         id: tap_token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./.github/actions/tap-token
         with:
           client-id: ${{ vars.TAP_APP_CLIENT_ID }}
-          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: dlouwers
-          repositories: homebrew-tap
+          workload-identity-provider: ${{ vars.TAP_WIF_PROVIDER }}
+          kms-key-version: ${{ vars.TAP_KMS_KEY_VERSION }}
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
@@ -55,3 +61,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ steps.tap_token.outputs.token }}
+
+      # The action has no post step, so the token is revoked here rather
+      # than left to expire.
+      - name: Revoke the tap token
+        if: always() && steps.tap_token.outputs.token != ''
+        env:
+          TOKEN: ${{ steps.tap_token.outputs.token }}
+        run: |
+          curl -fsS -X DELETE -H "Authorization: Bearer ${TOKEN}" https://api.github.com/installation/token
