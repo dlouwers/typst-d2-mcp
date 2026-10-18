@@ -30,6 +30,24 @@ jobs:
           go-version: '1.25'
           cache: true
 
+      # Before GoReleaser: its `go mod download` hook and every build resolve
+      # the private design-system module (#82). ci.yml and image.yml had this
+      # step; this workflow did not, so the first release after #82 would
+      # have failed here while image.yml still pushed the tag to prod (#159).
+      #
+      # No HAS_DS_KEY guard as in ci.yml: a tag push always sees the Actions
+      # secrets, and a release without the module cannot build anyway.
+      #
+      # The action rewrites https://github.com/ for git with the read-only
+      # design-system token. GoReleaser does not go through git for the
+      # release or the tap — both use the API with their own tokens — so
+      # that rewrite does not reach them.
+      - name: Authenticate to the design system
+        uses: ./.github/actions/design-system-auth
+        with:
+          client-id: ${{ vars.DS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DS_APP_PRIVATE_KEY }}
+
       # Writing the Homebrew formulae is machine access to another repo, so
       # it goes through a GitHub App rather than a personal token: minted
       # per run, expiring in about an hour, owned by the account rather

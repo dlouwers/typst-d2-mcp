@@ -1,8 +1,11 @@
 version: 2
 
 before:
+  # No `go mod tidy`: the release builds the tagged commit as it is. If tidy
+  # changed go.mod or go.sum, GoReleaser would stop on a dirty tree after the
+  # image for the same tag had already gone to prod (#159). An untidy go.mod
+  # fails the build loudly on its own.
   hooks:
-    - go mod tidy
     - go mod download
 
 builds:

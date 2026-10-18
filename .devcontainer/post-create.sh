@@ -88,7 +88,32 @@ go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 go install golang.org/x/tools/gopls@latest
 go install golang.org/x/vuln/cmd/govulncheck@latest
 
-echo "==> go mod download"
-go mod download
+# Since #82 the design system is a private Go module, so `go mod download`
+# — and every go build/vet/test after it — needs a GitHub credential.
+# GOPRIVATE is set in devcontainer.json; this is the credential half.
+#
+# The token is not copied anywhere. devcontainer.json bind-mounts the host's
+# ~/.config/gh readonly and this makes gh git's credential helper, so git
+# reads the host's live token when it fetches. Same setup as investor-buddy
+# (#338 there), which explains the mount-over-env-var choice at length.
+#
+# Without gh auth this warns and skips rather than failing: d2, typst,
+# Playwright and the linters above are still useful, and the error a later
+# go command gives ("could not read Username") is legible enough. CI is the
+# opposite — .github/actions/design-system-auth fails the job outright,
+# because a CI run that cannot build proves nothing.
+echo "==> design-system credentials + go mod download"
+if gh auth status >/dev/null 2>&1; then
+  gh auth setup-git
+  (cd "$REPO_ROOT" && go mod download)
+else
+  echo
+  echo "WARNING: no usable gh auth found at ~/.config/gh."
+  echo "  The private design-system module cannot be fetched, so go build,"
+  echo "  go vet, go test and the Playwright server build will all fail."
+  echo "  Fix on the HOST, then rebuild this container:"
+  echo "      gh auth login"
+  echo
+fi
 
 echo "✅ $(go version | cut -d' ' -f3) · d2 $(d2 --version) · typst $(typst --version | cut -d' ' -f2) · golangci-lint $(golangci-lint version 2>&1 | grep -oE 'version [0-9.]+' | head -1)"
