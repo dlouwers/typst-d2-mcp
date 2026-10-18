@@ -3,7 +3,9 @@ name: Image
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    # No `tags: v*` here. A release image is built by release.yml, after
+    # GoReleaser has succeeded (see workflow_call below).
+    #
     # Loop guard: Flux's image-automation-controller commits to the
     # overlay kustomization.yaml files on every successful build/tag
     # to bump newTag. Those commits don't change source code, but
@@ -16,6 +18,14 @@ on:
   # Manual trigger — `gh workflow run Image`. Useful when the push
   # trigger is missed or to re-publish without a new commit.
   workflow_dispatch: {}
+  # Called by release.yml on a v* tag, once GoReleaser has published the
+  # GitHub release and the tap formulae. The prod ImagePolicy in experiments
+  # follows ^vX.Y.Z$ image tags, so pushing that tag IS the prod deploy.
+  # Building it from its own tag trigger raced the release: a failed
+  # GoReleaser still left prod on the new version, with no release and no
+  # formula behind it (#159). `github.ref` here is the caller's tag ref, so
+  # the semver tags below come out the same.
+  workflow_call: {}
 
 # Avoid two concurrent builds on the same ref racing for the same
 # image tag — the second would push and overwrite mid-flight.

@@ -1,8 +1,11 @@
 version: 2
 
 before:
+  # No `go mod tidy`: the release builds the tagged commit as it is. If tidy
+  # changed go.mod or go.sum, GoReleaser would stop on a dirty tree after the
+  # image for the same tag had already gone to prod (#159). An untidy go.mod
+  # fails the build loudly on its own.
   hooks:
-    - go mod tidy
     - go mod download
 
 builds:
@@ -61,6 +64,13 @@ archives:
 
 checksum:
   name_template: 'checksums.txt'
+
+# A tag like v2.1.0-rc.1 becomes a GitHub pre-release rather than "Latest".
+# That is what makes an rc a safe end-to-end rehearsal (#159): the prod
+# ImagePolicy only follows ^vX.Y.Z$, so an rc tag exercises the release,
+# the tap token and the image build without moving prod.
+release:
+  prerelease: auto
 
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
