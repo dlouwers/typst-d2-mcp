@@ -88,3 +88,16 @@ jobs:
           TOKEN: ${{ steps.tap_token.outputs.token }}
         run: |
           curl -fsS -X DELETE -H "Authorization: Bearer ${TOKEN}" https://api.github.com/installation/token
+
+  # The release image, and with it the prod deploy: Flux moves prod to any
+  # new ^vX.Y.Z$ image tag. It waits for GoReleaser so prod can never run a
+  # version that has no GitHub release or Homebrew formula (#159). If the
+  # image build fails instead, "Re-run failed jobs" retries just this job.
+  image:
+    needs: goreleaser
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image.yml
+    # DS_APP_PRIVATE_KEY, for the private design-system module.
+    secrets: inherit
