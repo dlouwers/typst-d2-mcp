@@ -536,6 +536,9 @@ func templateNudge(src string) string {
 }
 
 func main() {
+	if handleCLI(os.Args[1:], os.Stdout) {
+		return
+	}
 	initLogger()
 
 	factory, err := selectFactory()

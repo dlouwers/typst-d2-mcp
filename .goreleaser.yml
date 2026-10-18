@@ -99,7 +99,7 @@ brews:
     install: |
       bin.install "typst-d2-prep"
     test: |
-      system "#{bin}/typst-d2-prep", "version"
+      assert_match version.to_s, shell_output("#{bin}/typst-d2-prep version")
 
   - name: typst-d2-mcp
     repository:
@@ -114,5 +114,7 @@ brews:
       - name: typst
     install: |
       bin.install "typst-d2-mcp"
+    # Not `--help`: before #159 that was ignored and started a stdio server,
+    # which hung `brew test` until its timeout.
     test: |
-      system "#{bin}/typst-d2-mcp", "--help"
+      assert_match version.to_s, shell_output("#{bin}/typst-d2-mcp version")
