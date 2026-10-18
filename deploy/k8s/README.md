@@ -81,16 +81,17 @@ kustomize edit set image \
   ghcr.io/dlouwers/typst-d2-mcp=ghcr.io/dlouwers/typst-d2-mcp:sha-abc1234
 ```
 
-### Test (Flux-managed)
+### Test and prod (Flux-managed)
 
-The test overlay's `newTag:` line carries a magic marker comment that
-Flux's `image-automation-controller` (in the
-[experiments repo](https://github.com/dlouwers/experiments))
-rewrites every time a new `<YYYYMMDDHHmmss>-sha-<short>` tag lands in
-GHCR. Nothing manual once Flux is wired up.
+Flux applies these overlays from an OCI artifact that
+`.github/workflows/flux-artifact.yml` publishes, not from git. That
+workflow sets each overlay's `newTag:` in the artifact: test gets the
+newest `<YYYYMMDDHHmmss>-sha-<short>` tag in GHCR, prod the highest
+`vX.Y.Z`. Nothing writes tags back to git, so `main` can stay
+protected. The `newTag:` lines here only hold what was last committed.
 
-The marker comment is anchored to the `newTag:` line — **do not
-remove or move it**.
+The `# {"flux-artifact": "<env>"}` marker comment is the workflow's
+anchor — **do not remove or move it**.
 
 ## Longhorn migration
 
