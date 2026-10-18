@@ -27,71 +27,55 @@ and key rotation are `scripts/gcp-tap-kms.nu` in `dlouwers/experiments` (#505).
 Run **Verify tap write access** from the Actions tab to prove the whole path
 without cutting a release.
 
-## 🧪 Testing the Setup
+## 🍺 What the release publishes
 
-### Test markdown2pdf Release
+GoReleaser writes two **casks** to `dlouwers/homebrew-tap`:
+`Casks/typst-d2-prep.rb` and `Casks/typst-d2-mcp.rb` (`homebrew_casks` in
+`.goreleaser.yml`). Both install from the same per-platform archive and each
+links its own binary; `d2` and `typst` come along as formula dependencies.
+The commits are authored as `stormlantern-actions-write[bot]`.
 
-```bash
-cd /Users/dirk/Documents/projects/markdown2pdf
-git tag -a v1.2.3 -m "Test release"
-git push origin v1.2.3
-```
+Casks rather than formulae since #162: GoReleaser deprecated `brews` in v2.10.
+Casks work on Linuxbrew as well as macOS. The binaries are not notarized, so
+the casks clear `com.apple.quarantine` in a postflight step on macOS.
 
-This will:
-- Build binaries for all platforms
-- Create GitHub release
-- Push `Formula/markdown2pdf.rb` to `homebrew-tap`
-
-### Test typst-d2-prep Release
+`markdown2pdf.rb` in the same tap belongs to the markdown2pdf project and is
+not touched by this repository's releases.
 
 ```bash
-cd /Users/dirk/Documents/projects/typst-d2-mcp
-git tag -a v0.1.0 -m "Initial Go release"
-git push origin v0.1.0
+brew install --cask dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
 ```
 
-This will:
-- Build binaries for all platforms
-- Create GitHub release
-- Push `Formula/typst-d2-prep.rb` to `homebrew-tap`
+### Moving existing formula installs to the casks
 
-## 📦 Final Repository Structure
-
-After both releases, `dlouwers/homebrew-tap` will contain:
-
-```
-homebrew-tap/
-├── Formula/
-│   ├── markdown2pdf.rb
-│   └── typst-d2-prep.rb
-└── README.md (optional)
-```
-
-## 🍺 User Installation Experience
+`tap_migrations.json` in the tap maps both names to the casks, so `brew update`
+tells an existing user what changed. It does not migrate them: Homebrew does
+not auto-install a cask from a third-party tap without `brew trust`. The
+README gives the two commands that do it:
 
 ```bash
-# One-time tap setup
-brew tap dlouwers/tap
-
-# Install either tool
-brew install markdown2pdf
-brew install typst-d2-prep
-
-# Or both at once
-brew install markdown2pdf typst-d2-prep
+brew uninstall --formula typst-d2-prep typst-d2-mcp
+brew install --cask dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
 ```
 
-## 🔍 Verification
+Uninstalling the formula first matters: with the formula still installed,
+the cask installs but skips linking its binary, and the old formula binary
+stays on the PATH.
 
-After creating a release, verify the formula was pushed:
+## 🧪 Testing a release
+
+**Rehearse with an rc tag.** `v2.2.0-rc.1` runs the whole release —
+GitHub pre-release, tap token, casks, brew smoke test, image — without moving
+prod: the prod ImagePolicy follows only `^vX.Y.Z$`. The casks in the tap do
+point at the rc until the real release.
+
+**Brew smoke test.** `brew-smoke.yml` runs after every release, on macOS and
+Linux: it installs both casks from the tap, checks the tap and both binaries
+report the tag, and on macOS that the binaries are not quarantined. It does
+not gate the prod image. Run it by hand for an existing release:
 
 ```bash
-# Check the tap repo
-gh repo view dlouwers/homebrew-tap --web
-
-# Or clone and inspect
-git clone https://github.com/dlouwers/homebrew-tap.git
-ls -la homebrew-tap/Formula/
+gh workflow run brew-smoke.yml -f version=v2.2.0
 ```
 
 ## ⚠️ Common Issues
