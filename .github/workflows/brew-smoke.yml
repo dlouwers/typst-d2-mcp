@@ -74,10 +74,13 @@ jobs:
 
       - name: The binaries run and report the release
         run: |
-          out=$(typst-d2-prep version)
-          echo "$out"
-          test "$out" = "typst-d2-prep version ${VERSION#v}"
-          typst-d2-mcp --help > /dev/null
+          for bin in typst-d2-prep typst-d2-mcp; do
+            # </dev/null: a binary that ignores the argument and starts a
+            # stdio server then exits on EOF instead of hanging the job.
+            out=$("$bin" version </dev/null)
+            echo "$out"
+            test "$out" = "$bin version ${VERSION#v}"
+          done
           d2 --version
           typst --version
 
