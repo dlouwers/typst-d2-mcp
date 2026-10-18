@@ -1,7 +1,9 @@
 # Proves the Homebrew tap write path without cutting a release.
 #
-# The release workflow depends on three things that have never been
-# exercised together: the app minting a token, its installation actually
+# The release workflow depends on four things that have never been
+# exercised together: KMS signing the app's JWT through GitHub OIDC (the WIF
+# provider admits this workflow only when dispatched on main), the app
+# minting a token from it, its installation actually
 # covering dlouwers/homebrew-tap, and the branch ruleset on that repo
 # letting the app bypass a protected main. If any of them is wrong, the
 # release finds out *after* publishing artifacts, which is the expensive
@@ -15,8 +17,12 @@ name: Verify tap write access
 on:
   workflow_dispatch:
 
-# Nothing here needs the default token; the app token does all the work.
-permissions: {}
+# The default token only reads this repository, for the local action; the
+# app token does the writing. id-token is the OIDC token that gets this job
+# permission to sign in KMS.
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   verify:
@@ -26,20 +32,31 @@ jobs:
       - name: Require the app to be configured
         env:
           TAP_APP_CLIENT_ID: ${{ vars.TAP_APP_CLIENT_ID }}
+          TAP_WIF_PROVIDER: ${{ vars.TAP_WIF_PROVIDER }}
+          TAP_KMS_KEY_VERSION: ${{ vars.TAP_KMS_KEY_VERSION }}
         run: |
-          if [ -z "$TAP_APP_CLIENT_ID" ]; then
-            echo "::error::TAP_APP_CLIENT_ID is not set — configure the app before running this"
-            exit 1
-          fi
+          for v in TAP_APP_CLIENT_ID TAP_WIF_PROVIDER TAP_KMS_KEY_VERSION; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v is not set — configure the app before running this"
+              exit 1
+            fi
+          done
+
+      # Only for ./.github/actions/tap-token, which a local `uses:` reads
+      # from the workspace.
+      - name: Check out the token action
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/actions/tap-token
+          persist-credentials: false
 
       - name: Mint a token for the Homebrew tap
         id: tap_token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: ./.github/actions/tap-token
         with:
           client-id: ${{ vars.TAP_APP_CLIENT_ID }}
-          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: dlouwers
-          repositories: homebrew-tap
+          workload-identity-provider: ${{ vars.TAP_WIF_PROVIDER }}
+          kms-key-version: ${{ vars.TAP_KMS_KEY_VERSION }}
 
       - name: Check out the tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,8 +80,14 @@ jobs:
         run: |
           echo "### Tap write access verified :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- KMS signed the app JWT through GitHub OIDC" >> "$GITHUB_STEP_SUMMARY"
           echo "- app minted a token for \`dlouwers/homebrew-tap\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- its installation covers that repository" >> "$GITHUB_STEP_SUMMARY"
           echo "- the branch ruleset let it push to a protected \`main\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`HOMEBREW_TAP_TOKEN\` can now be deleted, and the fallback in release.yml dropped." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Revoke the tap token
+        if: always() && steps.tap_token.outputs.token != ''
+        env:
+          TOKEN: ${{ steps.tap_token.outputs.token }}
+        run: |
+          curl -fsS -X DELETE -H "Authorization: Bearer ${TOKEN}" https://api.github.com/installation/token

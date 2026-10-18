@@ -7,43 +7,25 @@
 3. **typst-d2-mcp updated**: `.goreleaser.yml` includes Homebrew configuration
 4. **Both repos pushed to GitHub**
 
-## 🔧 Manual Step Required: Add GitHub Secret
+## 🔑 How the release writes to the tap
 
-GoReleaser needs a GitHub token to push formula files to your `homebrew-tap` repository.
+GoReleaser gets `HOMEBREW_TAP_TOKEN` from the release job, not from a secret.
+`.github/actions/tap-token` mints it per run:
 
-### Option 1: Copy Existing Token (If You Have It)
+1. GitHub OIDC → Google Workload Identity Federation, admitted only for this
+   repository's `release.yml` on a `v*` tag (or `verify-tap-write.yml`
+   dispatched on `main`).
+2. Cloud KMS signs the JWT of the tap GitHub App (id 4637258, installed on
+   `dlouwers/homebrew-tap` only, Contents: write). The App's private key was
+   imported into KMS and cannot be exported; there is no copy in GitHub.
+3. The JWT is exchanged for a one-hour installation token scoped to
+   `homebrew-tap`, which the job revokes when it finishes.
 
-If you still have the GitHub Personal Access Token you created for markdown2pdf:
-
-```bash
-gh secret set HOMEBREW_TAP_TOKEN --repo dlouwers/typst-d2-mcp --body "YOUR_TOKEN_HERE"
-```
-
-### Option 2: Use the Same Token via Web UI
-
-1. Go to https://github.com/dlouwers/typst-d2-mcp/settings/secrets/actions
-2. Click **New repository secret**
-3. Name: `HOMEBREW_TAP_TOKEN`
-4. Value: Paste the same token you used for markdown2pdf
-5. Click **Add secret**
-
-### Option 3: Create a New Token (If Needed)
-
-1. Go to https://github.com/settings/tokens/new
-2. Note: `GoReleaser Homebrew Tap`
-3. Expiration: Choose duration (90 days, 1 year, or no expiration)
-4. Scopes: Check **`repo`** (full control of private repositories)
-5. Click **Generate token**
-6. Copy the token (you won't see it again!)
-7. Add to both repos:
-
-```bash
-# Set for typst-d2-mcp
-gh secret set HOMEBREW_TAP_TOKEN --repo dlouwers/typst-d2-mcp --body "ghp_xxxxxxxxxxxx"
-
-# Update for markdown2pdf (if needed)
-gh secret set HOMEBREW_TAP_TOKEN --repo dlouwers/markdown2pdf --body "ghp_xxxxxxxxxxxx"
-```
+Configuration is three repository variables, none of them secret:
+`TAP_APP_CLIENT_ID`, `TAP_WIF_PROVIDER` and `TAP_KMS_KEY_VERSION`. The GCP side
+and key rotation are `scripts/gcp-tap-kms.nu` in `dlouwers/experiments` (#505).
+Run **Verify tap write access** from the Actions tab to prove the whole path
+without cutting a release.
 
 ## 🧪 Testing the Setup
 
@@ -114,15 +96,11 @@ ls -la homebrew-tap/Formula/
 
 ## ⚠️ Common Issues
 
-**Issue**: GoReleaser fails with "403 Forbidden" or "Token not found"
-**Fix**: Ensure `HOMEBREW_TAP_TOKEN` is set in the repository secrets
+**Issue**: the mint step fails at Google STS with "rejected by the attribute condition"
+**Fix**: the job is not `release.yml` on a `v*` tag push or `verify-tap-write.yml` on `main`; that is the provider working as intended
 
-**Issue**: Formula not appearing in tap
-**Fix**: Check GoReleaser logs in GitHub Actions, ensure token has `repo` scope
+**Issue**: the mint step fails at `asymmetricSign` with 403 or NOT_FOUND
+**Fix**: `TAP_KMS_KEY_VERSION` points at a disabled or wrong version; `scripts/gcp-tap-kms.nu status` in `dlouwers/experiments` lists them
 
-**Issue**: Token expired
-**Fix**: Generate new token, update secret in both repos
-
----
-
-**Status**: ✅ Configuration complete, pending `HOMEBREW_TAP_TOKEN` setup for typst-d2-mcp
+**Issue**: GitHub answers the JWT with 401
+**Fix**: the KMS version is not a key the App knows; compare `gcp-tap-kms.nu fingerprint` with the key list on the App's settings page
