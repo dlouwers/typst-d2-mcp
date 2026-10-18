@@ -65,6 +65,13 @@ archives:
 checksum:
   name_template: 'checksums.txt'
 
+# A tag like v2.1.0-rc.1 becomes a GitHub pre-release rather than "Latest".
+# That is what makes an rc a safe end-to-end rehearsal (#159): the prod
+# ImagePolicy only follows ^vX.Y.Z$, so an rc tag exercises the release,
+# the tap token and the image build without moving prod.
+release:
+  prerelease: auto
+
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
 
