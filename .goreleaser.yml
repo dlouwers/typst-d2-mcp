@@ -49,7 +49,7 @@ builds:
 
 archives:
   - id: default
-    format: tar.gz
+    formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
@@ -57,7 +57,7 @@ archives:
       {{- .Arch }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     files:
       - LICENSE
       - README.md
@@ -73,7 +73,7 @@ release:
   prerelease: auto
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
@@ -84,37 +84,58 @@ changelog:
       - '^chore:'
       - typo
 
-brews:
+# Casks rather than formulae: GoReleaser deprecated `brews` in v2.10 (#162).
+# Both casks install from the same per-platform archive, which holds both
+# binaries; each links only its own.
+#
+# commit_author is the tap app's bot account, so the tap's history names
+# what actually pushed rather than GoReleaser's default "goreleaserbot".
+#
+# The binaries are not notarized, so on macOS Gatekeeper would quarantine
+# them. The post-install step clears that attribute on the staged files
+# only. Signing and notarizing would be the proper fix; until then this is
+# what makes `brew install` give a binary that runs.
+homebrew_casks:
   - name: typst-d2-prep
+    binaries: [typst-d2-prep]
+    description: "Preprocessor for D2 diagrams in Typst documents"
+    homepage: "https://github.com/dlouwers/typst-d2-mcp"
+    license: "MIT"
+    dependencies:
+      - formula: d2
+      - formula: typst
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/typst-d2-prep"]
+          end
+    commit_author:
+      name: stormlantern-actions-write[bot]
+      email: 318305978+stormlantern-actions-write[bot]@users.noreply.github.com
     repository:
       owner: dlouwers
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: "https://github.com/dlouwers/typst-d2-mcp"
-    description: "Preprocessor for D2 diagrams in Typst documents"
-    license: "MIT"
-    dependencies:
-      - name: d2
-      - name: typst
-    install: |
-      bin.install "typst-d2-prep"
-    test: |
-      assert_match version.to_s, shell_output("#{bin}/typst-d2-prep version")
 
   - name: typst-d2-mcp
+    binaries: [typst-d2-mcp]
+    description: "MCP server for AI-assisted Typst documentation with D2 diagrams"
+    homepage: "https://github.com/dlouwers/typst-d2-mcp"
+    license: "MIT"
+    dependencies:
+      - formula: d2
+      - formula: typst
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/typst-d2-mcp"]
+          end
+    commit_author:
+      name: stormlantern-actions-write[bot]
+      email: 318305978+stormlantern-actions-write[bot]@users.noreply.github.com
     repository:
       owner: dlouwers
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    homepage: "https://github.com/dlouwers/typst-d2-mcp"
-    description: "MCP server for AI-assisted Typst documentation with D2 diagrams"
-    license: "MIT"
-    dependencies:
-      - name: d2
-      - name: typst
-    install: |
-      bin.install "typst-d2-mcp"
-    # Not `--help`: before #159 that was ignored and started a stdio server,
-    # which hung `brew test` until its timeout.
-    test: |
-      assert_match version.to_s, shell_output("#{bin}/typst-d2-mcp version")

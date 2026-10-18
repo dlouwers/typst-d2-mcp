@@ -1,12 +1,11 @@
-# Installs a released version from dlouwers/homebrew-tap the way a user
-# would, and checks it runs. This is the "brew upgrade" step from #159's test
+# Installs a released version from dlouwers/homebrew-tap as casks, the way
+# a user would, and checks it runs. This is the "brew upgrade" step from #159's test
 # plan, made automatic: whether the formula's URL and sha256 match a real
 # release asset, whether d2 and typst resolve as dependencies, and whether the
 # binaries start and report the version that was tagged.
 #
 # macOS as well as Linux on purpose. macOS is where most brew users are, and
-# where Gatekeeper and quarantine apply — which matters once #162 moves the
-# formulae to casks.
+# where Gatekeeper and quarantine apply to the unsigned binaries.
 #
 # Called by release.yml after GoReleaser, but NOT a gate for the prod image.
 # A broken bottle in homebrew-core (d2, typst) would otherwise block a deploy
@@ -58,7 +57,7 @@ jobs:
       - name: Install from the tap
         run: |
           brew --version
-          brew install dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
+          brew install --cask dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
 
       # The tap must point at the release under test. Comparing here, rather
       # than only through the binary, gives a clear message when the tap and
@@ -67,7 +66,7 @@ jobs:
         run: |
           want="${VERSION#v}"
           for f in typst-d2-prep typst-d2-mcp; do
-            got=$(brew info --json=v2 "dlouwers/tap/$f" | jq -r '.formulae[0].versions.stable')
+            got=$(brew info --json=v2 --cask "dlouwers/tap/$f" | jq -r '.casks[0].version')
             echo "$f: tap=$got want=$want"
             test "$got" = "$want"
           done
@@ -84,6 +83,19 @@ jobs:
           d2 --version
           typst --version
 
-      # The formulae's own test blocks, as `brew test` runs them.
-      - name: brew test
-        run: brew test dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
+      # Casks have no test block, so `brew test` is gone; the version check
+      # above is what the formula tests used to assert. What a cask adds on
+      # macOS is quarantine: the binaries are not notarized, and the cask's
+      # postflight must have cleared the attribute or Gatekeeper may refuse
+      # to run them on a user's machine (#162).
+      - name: No quarantine on the installed binaries (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for bin in typst-d2-prep typst-d2-mcp; do
+            real=$(readlink -f "$(command -v "$bin")")
+            if xattr -p com.apple.quarantine "$real" 2>/dev/null; then
+              echo "::error::$real is still quarantined"
+              exit 1
+            fi
+            echo "$real: not quarantined"
+          done
