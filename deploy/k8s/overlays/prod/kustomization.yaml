@@ -41,19 +41,14 @@ patches:
   # volumeName-pinned to a specific Longhorn PV — see the patch file
   # for the operational story.
   - path: pvc-patch.yaml
-# Pinned to an immutable version tag — the deploy is reproducible and
-# `kubectl apply -k` always picks up exactly the image referenced
-# here, regardless of imagePullPolicy. Bumping = edit `newTag`,
-# commit, apply.
+# Pinned to an immutable version tag. In the OCI artifact Flux applies,
+# .github/workflows/flux-artifact.yml sets it to the highest `vX.Y.Z` in
+# GHCR; nothing writes it back here. The value in git is only what was
+# last committed, for a hand-run `kubectl apply -k`. The marker comment
+# is the workflow's anchor — DO NOT remove or move it.
 #
-# Release flow:
-#   1. git tag v0.X.Y && git push --tags     # Image workflow builds :v0.X.Y on this tag
-#   2. wait for the Image workflow to publish to GHCR
-#   3. update `newTag` here to v0.X.Y, commit on a release PR
-#   4. merge → kubectl apply -k deploy/k8s/overlays/prod/  → kubelet pulls :v0.X.Y
-#
-# For ad-hoc, between-release deploys: override locally without committing —
-#   kustomize edit set image ghcr.io/dlouwers/typst-d2-mcp=ghcr.io/dlouwers/typst-d2-mcp:sha-abc1234
+# Release flow: push a v* tag. release.yml runs GoReleaser, then builds
+# and pushes `:vX.Y.Z`, and its success triggers flux-artifact.yml.
 images:
   - name: ghcr.io/dlouwers/typst-d2-mcp
-    newTag: v2.2.0 # {"$imagepolicy": "flux-system:typst-d2-mcp-prod:tag"}
+    newTag: v2.2.0 # {"flux-artifact": "prod"}

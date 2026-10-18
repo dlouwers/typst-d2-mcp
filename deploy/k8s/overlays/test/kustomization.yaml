@@ -3,11 +3,10 @@ kind: Kustomization
 # Test overlay. Apply with:
 #   kubectl apply -k deploy/k8s/overlays/test/
 #
-# Tracks main-branch HEAD via a moving timestamp+sha tag that Flux's
-# image-automation-controller rewrites on every successful build.
-# Tag scheme is `<YYYYMMDDHHmmss>-sha-<short>` so Flux's ImagePolicy
-# picks the newest by numerical sort on the timestamp. Image is
-# pulled exactly once per tag (immutable).
+# Tracks main-branch HEAD via a moving timestamp+sha tag that
+# .github/workflows/flux-artifact.yml sets in the artifact Flux applies.
+# Tag scheme is `<YYYYMMDDHHmmss>-sha-<short>`, so the newest sorts
+# last. Image is pulled exactly once per tag (immutable).
 #
 # Hostname: test.typst-d2-mcp.stormlantern.nl
 # DNS A record + GitHub OAuth callback URL are user-provisioned (see
@@ -35,14 +34,11 @@ patches:
   - path: ingress-patch.yaml
   # Same Longhorn migration as prod, against the test env's PV.
   - path: pvc-patch.yaml
-# Bot-rewritten on every successful main build by Flux's
-# image-automation-controller (apps/typst-d2-mcp-test.yaml in the
-# experiments repo). The marker comment on the `newTag:` line below
-# is the controller's anchor — DO NOT remove or move it.
-#
-# Once Flux bumps this for the first time, the value will look like
-# `20260519110000-sha-abc1234`. The literal placeholder ensures the
-# manifest stays schema-valid before that happens.
+# Set in the OCI artifact by .github/workflows/flux-artifact.yml to the
+# newest `<YYYYMMDDHHmmss>-sha-<short>` tag in GHCR; nothing writes it
+# back here. The value in git is only what was last committed, for a
+# hand-run `kubectl apply -k`. The marker comment is the workflow's
+# anchor — DO NOT remove or move it.
 images:
   - name: ghcr.io/dlouwers/typst-d2-mcp
-    newTag: 20261018201824-sha-aeba27d # {"$imagepolicy": "flux-system:typst-d2-mcp-test:tag"}
+    newTag: 20261018201824-sha-aeba27d # {"flux-artifact": "test"}

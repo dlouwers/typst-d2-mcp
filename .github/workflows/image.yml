@@ -6,12 +6,10 @@ on:
     # No `tags: v*` here. A release image is built by release.yml, after
     # GoReleaser has succeeded (see workflow_call below).
     #
-    # Loop guard: Flux's image-automation-controller commits to the
-    # overlay kustomization.yaml files on every successful build/tag
-    # to bump newTag. Those commits don't change source code, but
-    # without this filter they would re-trigger this workflow → new
-    # image → new bot commit → infinite loop. Mirrors investor-buddy's
-    # release.yml — same Flux setup lives in the experiments repo.
+    # An overlay-only commit changes no code, so it needs no new image.
+    # This was the loop guard while Flux's image-automation-controller
+    # committed tag bumps here; since dlouwers/experiments#509 the tags
+    # are set in the OCI artifact by flux-artifact.yml instead.
     paths-ignore:
       - 'deploy/k8s/overlays/test/kustomization.yaml'
       - 'deploy/k8s/overlays/prod/kustomization.yaml'
