@@ -1,0 +1,76 @@
+# Publishes deploy/k8s as an OCI artifact in Google Artifact Registry, which
+# is where Flux reads this repository's manifests from instead of cloning it
+# with a GitHub App key (dlouwers/experiments#509).
+#
+# Every push to main, including Flux's own image-automation bumps (an App
+# push, which does trigger workflows), lands as `sha-<commit>` and moves the
+# `main` tag Flux follows. The artifact carries the git source and revision,
+# so `flux get sources oci` still names the commit it applied.
+#
+# No secret. The job proves who it is through GitHub OIDC → Workload Identity
+# Federation: the `github-flux-oci` provider for this repository admits only
+# this file, on main, on a push (scripts/gcp-flux-oci.nu in
+# dlouwers/experiments), and only this repository's CI may write to
+# flux-typst-d2-mcp. A rename of this file therefore stops deploys until the
+# provider is updated — deliberately, since this file decides what Flux
+# applies.
+name: flux-artifact
+
+on:
+  push:
+    branches: [main]
+
+# Never cancel: a run that is cut off after pushing sha-<commit> but before
+# tagging leaves `main` where it was, which is safe, but a newer run must not
+# be overtaken by an older one. GitHub keeps at most one pending run per group,
+# always the newest, so `main` ends on the latest push.
+concurrency:
+  group: flux-artifact
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ARTIFACT: oci://europe-west4-docker.pkg.dev/homelab-495021/flux-typst-d2-mcp/manifests
+      WIF_PROVIDER: projects/356863323226/locations/global/workloadIdentityPools/github-flux-oci/providers/typst-d2-mcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The cluster runs Flux 2.8.6; the CLI matches it.
+      - uses: fluxcd/flux2/action@04acaec6161ac4fb1a82ffafa88901c03271d34f # v2.8.6
+        with:
+          version: 2.8.6
+
+      - name: Authenticate to Google Cloud
+        id: gcp
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          create_credentials_file: false
+
+      - name: Push and tag the artifact
+        env:
+          TOKEN: ${{ steps.gcp.outputs.auth_token }}
+        run: |
+          set -euo pipefail
+          creds="oauth2accesstoken:${TOKEN}"
+          flux push artifact "${ARTIFACT}:sha-${GITHUB_SHA}" \
+            --path ./deploy/k8s \
+            --source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --revision "main@sha1:${GITHUB_SHA}" \
+            --creds "$creds"
+          flux tag artifact "${ARTIFACT}:sha-${GITHUB_SHA}" --tag main --creds "$creds"
+          {
+            echo "### Flux artifact pushed"
+            echo ""
+            echo "- \`${ARTIFACT}:sha-${GITHUB_SHA}\`, tagged \`main\`"
+            echo "- revision \`main@sha1:${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
