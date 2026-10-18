@@ -107,3 +107,12 @@ jobs:
     uses: ./.github/workflows/image.yml
     # DS_APP_PRIVATE_KEY, for the private design-system module.
     secrets: inherit
+
+  # Installs what was just published from the tap, on macOS and Linux. Not a
+  # gate for `image` on purpose: see brew-smoke.yml.
+  brew:
+    needs: goreleaser
+    permissions: {}
+    uses: ./.github/workflows/brew-smoke.yml
+    with:
+      version: ${{ github.ref_name }}

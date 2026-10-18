@@ -1,0 +1,86 @@
+# Installs a released version from dlouwers/homebrew-tap the way a user
+# would, and checks it runs. This is the "brew upgrade" step from #159's test
+# plan, made automatic: whether the formula's URL and sha256 match a real
+# release asset, whether d2 and typst resolve as dependencies, and whether the
+# binaries start and report the version that was tagged.
+#
+# macOS as well as Linux on purpose. macOS is where most brew users are, and
+# where Gatekeeper and quarantine apply — which matters once #162 moves the
+# formulae to casks.
+#
+# Called by release.yml after GoReleaser, but NOT a gate for the prod image.
+# A broken bottle in homebrew-core (d2, typst) would otherwise block a deploy
+# for a reason that has nothing to do with this release. A failure shows up
+# as a red job in the release run.
+#
+# Run it by hand for an existing release: `gh workflow run brew-smoke.yml -f version=v2.1.0`.
+name: Brew smoke test
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Tag to expect, e.g. v2.1.0 or v2.1.0-rc.1.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Tag to expect, e.g. v2.1.0. Must be what the tap currently points at.
+        required: true
+        type: string
+
+# The tap is public and nothing here writes anywhere.
+permissions: {}
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ inputs.version }}
+      HOMEBREW_NO_ANALYTICS: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      HOMEBREW_NO_ENV_HINTS: '1'
+    steps:
+      # ubuntu-latest ships Homebrew but leaves it off PATH; macOS has it on.
+      - name: Put brew on PATH
+        run: |
+          if ! command -v brew >/dev/null; then
+            /home/linuxbrew/.linuxbrew/bin/brew shellenv >> "$GITHUB_ENV"
+            echo /home/linuxbrew/.linuxbrew/bin >> "$GITHUB_PATH"
+          fi
+
+      - name: Install from the tap
+        run: |
+          brew --version
+          brew install dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
+
+      # The tap must point at the release under test. Comparing here, rather
+      # than only through the binary, gives a clear message when the tap and
+      # the tag disagree.
+      - name: The tap points at this release
+        run: |
+          want="${VERSION#v}"
+          for f in typst-d2-prep typst-d2-mcp; do
+            got=$(brew info --json=v2 "dlouwers/tap/$f" | jq -r '.formulae[0].versions.stable')
+            echo "$f: tap=$got want=$want"
+            test "$got" = "$want"
+          done
+
+      - name: The binaries run and report the release
+        run: |
+          out=$(typst-d2-prep version)
+          echo "$out"
+          test "$out" = "typst-d2-prep version ${VERSION#v}"
+          typst-d2-mcp --help > /dev/null
+          d2 --version
+          typst --version
+
+      # The formulae's own test blocks, as `brew test` runs them.
+      - name: brew test
+        run: brew test dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
