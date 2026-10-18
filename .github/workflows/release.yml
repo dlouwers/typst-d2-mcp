@@ -79,6 +79,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ steps.tap_token.outputs.token }}
+          # Release the tag that triggered this run. Left to itself,
+          # GoReleaser derives the version from git, and when two tags sit
+          # on one commit it can pick the other one: v2.1.0 on the commit
+          # rehearsed as v2.1.0-rc.1 tried to re-upload to the rc release
+          # and failed on "already_exists" (#159).
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
 
       # The action has no post step, so the token is revoked here rather
       # than left to expire.
