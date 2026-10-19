@@ -18,6 +18,19 @@
 # this repository's context just as much as an action is, and the same
 # reasoning about mutable refs applies to it.
 version: 2
+# The private design-system module, from Google Artifact Registry
+# (dlouwers/experiments#526). Dependabot's proxy exchanges its GitHub OIDC
+# token at the github-go-modules/typst-d2-mcp provider, then impersonates
+# go-modules-reader: a direct federated token is refused for expiring too soon
+# (dependabot/proxy#262). Drop `service-account` once dependabot/proxy#328 is
+# live. GOPROXY and GONOSUMDB for the update itself are in go.env. No secret.
+registries:
+  go-stormlantern:
+    type: goproxy-server
+    url: https://europe-west4-go.pkg.dev/homelab-495021/go-stormlantern
+    workload-identity-provider: projects/356863323226/locations/global/workloadIdentityPools/github-go-modules/providers/typst-d2-mcp
+    service-account: go-modules-reader@homelab-495021.iam.gserviceaccount.com
+
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -64,6 +77,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    registries:
+      - go-stormlantern
     commit-message:
       prefix: "build(deps)"
     labels:
