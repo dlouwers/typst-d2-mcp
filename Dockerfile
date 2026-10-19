@@ -7,7 +7,7 @@
 # image with TYPST_D2_MCP_AUTH=none and get the anonymous experience.
 
 # --- build stage ----------------------------------------------------------
-FROM golang:1.25-bookworm AS build
+FROM golang:1.26-bookworm AS build
 
 WORKDIR /src
 

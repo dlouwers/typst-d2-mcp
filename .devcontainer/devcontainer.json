@@ -14,10 +14,10 @@
   "name": "typst-d2-mcp",
   "image": "mcr.microsoft.com/devcontainers/base:debian",
   "features": {
-    // Ahead of go.mod's `go 1.25.5` directive on purpose. The directive
+    // Kept on the same minor as CI's setup-go. go.mod's `go` directive
     // is the *language* version, enforced by the compiler whatever
-    // toolchain runs it, so 1.26 here cannot silently introduce
-    // 1.26-only syntax that CI would then reject.
+    // toolchain runs it, so this may run ahead of it without letting
+    // newer syntax slip past CI.
     "ghcr.io/devcontainers/features/go:1": {
       "version": "1.26"
     },
