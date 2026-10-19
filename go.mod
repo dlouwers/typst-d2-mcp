@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/dlouwers/stormlantern-design-system v0.2.0
-	github.com/mark3labs/mcp-go v0.58.0
+	github.com/mark3labs/mcp-go v1.3.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/yosida95/uritemplate/v3 v3.0.2
 	modernc.org/sqlite v1.57.0
