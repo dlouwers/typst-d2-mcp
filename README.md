@@ -246,7 +246,7 @@ schema migrations, and hardening notes.
 
 ## Requirements
 
-- **Go 1.25+** (for building from source, optional — see `go.mod` for the exact directive)
+- **Go 1.26+** (for building from source, optional — see `go.mod` for the exact directive)
 - **D2 CLI** installed and in PATH: https://d2lang.com/tour/install
 - **Typst 0.14.2+**: https://github.com/typst/typst
 - **Typst `based` package**: Automatically imported (no manual setup needed)

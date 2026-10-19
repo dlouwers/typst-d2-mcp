@@ -24,10 +24,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # go.mod requires 1.25.5. With 1.23 here the build still worked,
-          # but only because the go command silently downloaded the newer
-          # toolchain on every run — slower, and it hid the mismatch.
-          go-version: '1.25'
+          # Must be at least go.mod's directive. With 1.23 here (against
+          # 1.25.5) the build still worked, but only because the go command
+          # silently downloaded the newer toolchain on every run — slower,
+          # and it hid the mismatch.
+          go-version: '1.26'
           cache: true
 
       # Before GoReleaser: its `go mod download` hook and every build resolve

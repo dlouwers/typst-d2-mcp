@@ -64,7 +64,12 @@ updates:
   # is vendored by hand and appears in no manifest, so Dependabot cannot see
   # it and never could. That gap is closed by vendorpins.json plus the weekly
   # registry check, not here.
-  - package-ecosystem: "npm"
+  #
+  # "bun", not "npm": the lockfile is playwright/bun.lock and CI installs
+  # with `bun install --frozen-lockfile`. The npm ecosystem bumped
+  # package.json but left bun.lock alone, so every PR it opened failed
+  # the frozen install (#154).
+  - package-ecosystem: "bun"
     directory: "/playwright"
     schedule:
       interval: weekly
