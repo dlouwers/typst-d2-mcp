@@ -88,31 +88,37 @@ go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 go install golang.org/x/tools/gopls@latest
 go install golang.org/x/vuln/cmd/govulncheck@latest
 
-# Since #82 the design system is a private Go module, so `go mod download`
-# — and every go build/vet/test after it — needs a GitHub credential.
-# GOPRIVATE is set in devcontainer.json; this is the credential half.
+# Since #82 the design system is a private Go module. GOPRIVATE (set in
+# devcontainer.json) makes go fetch it with git; this sends that fetch to
+# the bare mirror initialize.sh keeps on the host and devcontainer.json
+# mounts readonly. No credential exists in the container at all.
 #
-# The token is not copied anywhere. devcontainer.json bind-mounts the host's
-# ~/.config/gh readonly and this makes gh git's credential helper, so git
-# reads the host's live token when it fetches. Same setup as investor-buddy
-# (#338 there), which explains the mount-over-env-var choice at length.
+#   insteadOf            the module URL, answered from the mirror
+#   protocol.file.allow  go runs git with GIT_PROTOCOL_FROM_USER=0, which
+#                        since git 2.38.1 refuses file:// unless allowed
+#   safe.directory       the mount is owned by the host user, not vscode
 #
-# Without gh auth this warns and skips rather than failing: d2, typst,
-# Playwright and the linters above are still useful, and the error a later
-# go command gives ("could not read Username") is legible enough. CI is the
-# opposite — .github/actions/design-system-auth fails the job outright,
-# because a CI run that cannot build proves nothing.
-echo "==> design-system credentials + go mod download"
-if gh auth status >/dev/null 2>&1; then
-  gh auth setup-git
+# Without a mirror this warns and skips rather than failing: d2, typst,
+# Playwright and the linters above are still useful. CI is the opposite —
+# .github/actions/design-system-auth fails the job outright, because a CI
+# run that cannot build proves nothing.
+#
+# The mirror is fetched on every container start. After a design-system
+# bump mid-session, restart the container, or on the host:
+#   git -C ~/.cache/stormlantern-design-system.git fetch
+echo "==> design-system mirror + go mod download"
+DS_MIRROR=/opt/stormlantern-design-system.git
+git config --global url."$DS_MIRROR".insteadOf https://github.com/dlouwers/stormlantern-design-system
+git config --global protocol.file.allow always
+git config --global --add safe.directory "$DS_MIRROR"
+if [ -d "$DS_MIRROR/objects" ]; then
   (cd "$REPO_ROOT" && go mod download)
 else
   echo
-  echo "WARNING: no usable gh auth found at ~/.config/gh."
-  echo "  The private design-system module cannot be fetched, so go build,"
-  echo "  go vet, go test and the Playwright server build will all fail."
-  echo "  Fix on the HOST, then rebuild this container:"
-  echo "      gh auth login"
+  echo "WARNING: the design-system mirror at $DS_MIRROR is empty."
+  echo "  go build, go vet, go test and the Playwright server build will all"
+  echo "  fail at module resolution. initialize.sh printed why on the host;"
+  echo "  fix that, then restart this container."
   echo
 fi
 
