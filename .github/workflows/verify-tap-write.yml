@@ -4,7 +4,7 @@
 # exercised together: KMS signing the app's JWT through GitHub OIDC (the WIF
 # provider admits this workflow only when dispatched on main), the app
 # minting a token from it, its installation actually
-# covering dlouwers/homebrew-tap, and the branch ruleset on that repo
+# covering stormlantern-dev/homebrew-tap, and the branch ruleset on that repo
 # letting the app bypass a protected main. If any of them is wrong, the
 # release finds out *after* publishing artifacts, which is the expensive
 # moment to fail.
@@ -61,7 +61,7 @@ jobs:
       - name: Check out the tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: dlouwers/homebrew-tap
+          repository: stormlantern-dev/homebrew-tap
           token: ${{ steps.tap_token.outputs.token }}
           path: tap
 
@@ -81,7 +81,7 @@ jobs:
           echo "### Tap write access verified :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- KMS signed the app JWT through GitHub OIDC" >> "$GITHUB_STEP_SUMMARY"
-          echo "- app minted a token for \`dlouwers/homebrew-tap\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- app minted a token for \`stormlantern-dev/homebrew-tap\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- its installation covers that repository" >> "$GITHUB_STEP_SUMMARY"
           echo "- the branch ruleset let it push to a protected \`main\`" >> "$GITHUB_STEP_SUMMARY"
 

@@ -33,7 +33,7 @@ Render [D2 diagrams](https://d2lang.com) in [Typst](https://typst.app) documents
 
 ```bash
 # Option 1: Homebrew (macOS/Linux)
-brew install --cask dlouwers/tap/typst-d2-prep
+brew install --cask stormlantern-dev/tap/typst-d2-prep
 
 # Option 2: Download pre-built binary from GitHub Releases
 # https://github.com/dlouwers/typst-d2-mcp/releases
@@ -87,7 +87,7 @@ The MCP server provides AI assistants with tools to render D2 diagrams and compi
 
 ```bash
 # Option 1: Homebrew (macOS/Linux)
-brew install --cask dlouwers/tap/typst-d2-mcp
+brew install --cask stormlantern-dev/tap/typst-d2-mcp
 
 # Option 2: Download pre-built binary from GitHub Releases
 # https://github.com/dlouwers/typst-d2-mcp/releases
@@ -120,11 +120,13 @@ Add to your Claude Desktop config file:
 
 **Note:** If installed via Homebrew, the binary is at `/opt/homebrew/bin/typst-d2-mcp` (macOS ARM), `/usr/local/bin/typst-d2-mcp` (macOS Intel) or `/home/linuxbrew/.linuxbrew/bin/typst-d2-mcp` (Linux); `brew --prefix` prints the first part. Adjust path if built from source.
 
+**The tap moved** from `dlouwers/tap` to `stormlantern-dev/tap`. If you tapped the old name, it keeps working through GitHub's redirect; see [HOMEBREW_SETUP.md](HOMEBREW_SETUP.md) to switch.
+
 **Upgrading from a version before 2.2:** the tap now ships casks instead of formulae, and Homebrew does not move a third-party formula to a cask on its own. Switch once:
 
 ```bash
 brew uninstall --formula typst-d2-prep typst-d2-mcp
-brew install --cask dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
+brew install --cask stormlantern-dev/tap/typst-d2-prep stormlantern-dev/tap/typst-d2-mcp
 ```
 
 #### Available Tools
