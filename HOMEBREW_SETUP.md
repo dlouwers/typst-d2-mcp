@@ -16,7 +16,7 @@ GoReleaser gets `HOMEBREW_TAP_TOKEN` from the release job, not from a secret.
    repository's `release.yml` on a `v*` tag (or `verify-tap-write.yml`
    dispatched on `main`).
 2. Cloud KMS signs the JWT of the tap GitHub App (id 4637258, installed on
-   `dlouwers/homebrew-tap` only, Contents: write). The App's private key was
+   `stormlantern-dev/homebrew-tap` only, Contents: write). The App's private key was
    imported into KMS and cannot be exported; there is no copy in GitHub.
 3. The JWT is exchanged for a one-hour installation token scoped to
    `homebrew-tap`, which the job revokes when it finishes.
@@ -29,7 +29,7 @@ without cutting a release.
 
 ## 🍺 What the release publishes
 
-GoReleaser writes two **casks** to `dlouwers/homebrew-tap`:
+GoReleaser writes two **casks** to `stormlantern-dev/homebrew-tap`:
 `Casks/typst-d2-prep.rb` and `Casks/typst-d2-mcp.rb` (`homebrew_casks` in
 `.goreleaser.yml`). Both install from the same per-platform archive and each
 links its own binary; `d2` and `typst` come along as formula dependencies.
@@ -39,12 +39,20 @@ Casks rather than formulae since #162: GoReleaser deprecated `brews` in v2.10.
 Casks work on Linuxbrew as well as macOS. The binaries are not notarized, so
 the casks clear `com.apple.quarantine` in a postflight step on macOS.
 
-`markdown2pdf.rb` in the same tap belongs to the markdown2pdf project and is
-not touched by this repository's releases.
+The tap moved from `dlouwers/homebrew-tap` to `stormlantern-dev/homebrew-tap`
+on 2026-10-23. GitHub redirects the old name, so machines that tapped
+`dlouwers/tap` keep receiving updates through `brew update`. New installs use
+`stormlantern-dev/tap`. Switching an existing machine is optional; it means
+removing the casks and the old tap, then installing from the new one:
 
 ```bash
-brew install --cask dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
+brew uninstall --cask typst-d2-prep typst-d2-mcp
+brew untap dlouwers/tap
+brew install --cask stormlantern-dev/tap/typst-d2-prep stormlantern-dev/tap/typst-d2-mcp
 ```
+
+The redirect lasts as long as nobody creates a new repository called
+`dlouwers/homebrew-tap`.
 
 ### Moving existing formula installs to the casks
 
@@ -55,7 +63,7 @@ README gives the two commands that do it:
 
 ```bash
 brew uninstall --formula typst-d2-prep typst-d2-mcp
-brew install --cask dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
+brew install --cask stormlantern-dev/tap/typst-d2-prep stormlantern-dev/tap/typst-d2-mcp
 ```
 
 Uninstalling the formula first matters: with the formula still installed,

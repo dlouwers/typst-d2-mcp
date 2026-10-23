@@ -114,7 +114,7 @@ homebrew_casks:
       name: stormlantern-actions-write[bot]
       email: 318305978+stormlantern-actions-write[bot]@users.noreply.github.com
     repository:
-      owner: dlouwers
+      owner: stormlantern-dev
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
 
@@ -136,6 +136,6 @@ homebrew_casks:
       name: stormlantern-actions-write[bot]
       email: 318305978+stormlantern-actions-write[bot]@users.noreply.github.com
     repository:
-      owner: dlouwers
+      owner: stormlantern-dev
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"

@@ -4,7 +4,7 @@
 
 ```bash
 # Option 1: Homebrew (recommended)
-brew install dlouwers/tap/typst-d2-prep
+brew install stormlantern-dev/tap/typst-d2-prep
 
 # Option 2: Build from source
 git clone https://github.com/dlouwers/typst-d2-mcp.git

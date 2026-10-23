@@ -47,7 +47,7 @@ jobs:
       # it goes through a GitHub App rather than a personal token: minted
       # per run, expiring in about an hour, owned by the account rather
       # than by a person whose access it would otherwise inherit. The app is
-      # installed on dlouwers/homebrew-tap alone, with Contents: write and
+      # installed on stormlantern-dev/homebrew-tap alone, with Contents: write and
       # nothing else.
       #
       # Separate from the read app on purpose — App permissions apply to

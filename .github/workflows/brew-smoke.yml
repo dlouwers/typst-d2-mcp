@@ -1,4 +1,4 @@
-# Installs a released version from dlouwers/homebrew-tap as casks, the way
+# Installs a released version from stormlantern-dev/homebrew-tap as casks, the way
 # a user would, and checks it runs. This is the "brew upgrade" step from #159's test
 # plan, made automatic: whether the formula's URL and sha256 match a real
 # release asset, whether d2 and typst resolve as dependencies, and whether the
@@ -57,7 +57,7 @@ jobs:
       - name: Install from the tap
         run: |
           brew --version
-          brew install --cask dlouwers/tap/typst-d2-prep dlouwers/tap/typst-d2-mcp
+          brew install --cask stormlantern-dev/tap/typst-d2-prep stormlantern-dev/tap/typst-d2-mcp
 
       # The tap must point at the release under test. Comparing here, rather
       # than only through the binary, gives a clear message when the tap and
@@ -66,7 +66,7 @@ jobs:
         run: |
           want="${VERSION#v}"
           for f in typst-d2-prep typst-d2-mcp; do
-            got=$(brew info --json=v2 --cask "dlouwers/tap/$f" | jq -r '.casks[0].version')
+            got=$(brew info --json=v2 --cask "stormlantern-dev/tap/$f" | jq -r '.casks[0].version')
             echo "$f: tap=$got want=$want"
             test "$got" = "$want"
           done
