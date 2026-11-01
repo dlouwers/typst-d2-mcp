@@ -101,7 +101,7 @@ jobs:
           done
 
       # The cluster runs Flux 2.8.6; the CLI matches it.
-      - uses: fluxcd/flux2/action@b9c17924adb533d3617ec7de97a7b0f4acc07b39 # v2.9.6
+      - uses: fluxcd/flux2/action@3fa784edd773d56630bb9f62645e08f70c2cff0a # v2.10.0
         with:
           version: 2.8.6
 
