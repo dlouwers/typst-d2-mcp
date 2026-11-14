@@ -54,20 +54,15 @@
     // an accidental write. Sealing secrets stays in the experiments
     // repo, where kubeseal and the seal-*.nu scripts live.
     "source=${localEnv:HOME}/.kube,target=/home/vscode/.kube,type=bind,consistency=cached,readonly",
-    // The host's gh login, so the Go toolchain can fetch the private
-    // stormlantern-design-system module (#82). post-create.sh runs
-    // `gh auth setup-git`, which makes gh git's credential helper.
-    //
-    // Mounted rather than injected as a token env var, as in investor-buddy:
-    // the host token is a refreshable gho_, and a containerEnv copy is frozen
-    // at create time, while a mount reads the live file. An env var would
-    // also be visible to every install hook post-create runs (bun install,
-    // the Playwright download); git reaches for this only when it fetches.
-    //
-    // readonly holds because GH_NO_UPDATE_NOTIFIER below stops the
-    // background update check, the only thing gh routinely writes here.
-    "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached,readonly"
+    // A bare mirror of the private stormlantern-design-system module
+    // (#82), kept current on the host by initialize.sh. post-create.sh
+    // points git at it, so go resolves the module without a credential
+    // inside the container. Readonly: the container only ever reads it.
+    "source=${localEnv:HOME}/.cache/stormlantern-design-system.git,target=/opt/stormlantern-design-system.git,type=bind,consistency=cached,readonly"
   ],
+  // On the host, before every start: fetch the mirror above with the
+  // host's own git credential. See initialize.sh for why.
+  "initializeCommand": "sh .devcontainer/initialize.sh",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -83,15 +78,12 @@
     "KUBECONFIG": "/home/vscode/.kube/config",
     // Let `go install` fetch a newer toolchain when a tool needs one.
     "GOTOOLCHAIN": "auto",
-    // Configuration, not a credential. Fetches the private design-system
-    // module straight from github.com with the gh credential, off the public
-    // proxy and checksum database. CI instead reads it from Artifact Registry
-    // through WIF (.github/actions/design-system-auth); both serve the same
-    // tagged tree, so go.sum agrees either way.
-    "GOPRIVATE": "github.com/dlouwers/*",
-    // Stops gh writing state.yml to its config dir, which is what lets the
-    // gh mount above stay readonly.
-    "GH_NO_UPDATE_NOTIFIER": "1"
+    // Keeps the private design-system module off the public proxy and
+    // checksum database, so go fetches it with git — which post-create.sh
+    // redirects to the host mirror. CI instead reads it from Artifact
+    // Registry through WIF (.github/actions/design-system-auth); both serve
+    // the same tagged tree, so go.sum agrees either way.
+    "GOPRIVATE": "github.com/dlouwers/*"
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "remoteUser": "vscode"
