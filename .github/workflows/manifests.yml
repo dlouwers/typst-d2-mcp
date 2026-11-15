@@ -64,7 +64,7 @@ jobs:
     # CI — the same mutable-reference problem as a tag-pinned action, one level
     # up. Bump it deliberately, after reading the diff. See
     # dlouwers/experiments#301.
-    uses: dlouwers/ci-workflows/.github/workflows/validate-app-manifests.yaml@d441846849064cb5f39a04096ddc2ea2e4f2aba6 # v1.0.0
+    uses: dlouwers/ci-workflows/.github/workflows/validate-app-manifests.yaml@4862311aec9b37d066adaeb8ad2a77399b557e68 # v1.0.1
     with:
       # The two cluster facts the workflow cannot know. It lives in a public
       # repository of its own and states no cluster's facts, so these travel
